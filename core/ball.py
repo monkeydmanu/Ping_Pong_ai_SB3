@@ -9,7 +9,7 @@ from engine.collision import check_table_collision
 class Ball:
     def __init__(self, x, y, vx, vy, radius=BALL_RADIUS, angular_speed=0):
         self.pos = np.array([x, y], dtype=float)
-        self.vel = np.array([vx, vy], dtype=float)      # pixels/frame
+        self.vel = np.array([vx, vy], dtype=float)
         self.radius = radius
         self.angle = 90      # angle actuel pour l'affichage
         self.angular_speed = angular_speed      # rad/s
@@ -31,7 +31,8 @@ class Ball:
             speed_factor: Facteur de curriculum (0.5 = balle lente, 1.0 = normale)
         """
         if dt is None:
-            dt = 1.0 / FPS  # Temps réel par frame (1/120 = 0.0083s)
+            # Utiliser le FPS unique pour la physique
+            dt = 1.0 / FPS
 
         # Échelle globale pour ralentir ou accélérer la physique de la balle
         # Appliquer speed_factor ici pour curriculum learning

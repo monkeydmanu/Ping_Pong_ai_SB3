@@ -67,19 +67,32 @@ class PingPongEnv(gym.Env):
         self.agent_side = agent_side  # "left" ou "right"
         self.static_spawn = static_spawn
         
-        # Espace d'observation : dict avec spatial embeddings
-        # Format retourné: {'ball_idx': int, 'paddle_idx': int, 'continuous': array[11]}
-        # Note: gymnasium peut ne pas supporter directement Dict space, 
-        # mais on gère ça dans l'agent
-        self.observation_space = spaces.Box(
-            low=-1.0,
-            high=1.0,
-            shape=(14,),  # Shape des features continues
-            dtype=np.float32
-        )
+        # === ESPACE D'OBSERVATION (SB3 MultiInputPolicy) ===
+        # Format Dict avec embeddings spatiaux pour efficacité
+        # Les index sont mappés à une grille 16x16 (256 cellules)
+        self.observation_space = spaces.Dict({
+            # Index de cellule pour la position de la balle (grille 16x16)
+            "ball_idx": spaces.Box(low=0, high=255, shape=(1,), dtype=np.int64),
+            # Index de cellule pour la position de la raquette agent
+            "paddle_idx": spaces.Box(low=0, high=255, shape=(1,), dtype=np.int64),
+            # Index d'angle discret pour la raquette (16 bins, 22.5° chacun)
+            "angle_idx": spaces.Box(low=0, high=15, shape=(1,), dtype=np.int64),
+            # Features continues normalisées dans [-1, 1]
+            # [0-1] Vitesse balle (vx, vy)
+            # [2] Spin balle
+            # [3-4] Vitesse raquette agent (vx, vy)
+            # [5] Balle de notre côté ? (1/-1)
+            # [6] Balle vient vers nous ? (1/-1)
+            # [7] Rebonds notre côté (0/0.5/1)
+            # [8] Rebonds côté adverse (0/0.5/1)
+            # [9] Service ? (1/-1)
+            # [10-11] Distance balle→raquette (dx, dy)
+            # [12-13] Position raquette agent (x, y)
+            "continuous": spaces.Box(low=-1.0, high=1.0, shape=(14,), dtype=np.float32)
+        })
         
-        # Espace d'action : 3 valeurs continues [-1, 1]
-        # [move_x, move_y, rotate]
+        # === ESPACE D'ACTION (Continu) ===
+        # [move_x, move_y, rotate] dans [-1, 1]
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -139,7 +152,7 @@ class PingPongEnv(gym.Env):
         """Met à jour le compteur d'épisodes et ajuste la phase en conséquence."""
         self.episode_count = count
         # Phase automatique basée sur l'épisode
-        if count < 8000:
+        if count < 700:
             self.training_phase = 0
             self.opponent_difficulty = 0.0
         elif count < 1000:
@@ -237,7 +250,7 @@ class PingPongEnv(gym.Env):
     
     def step(self, action, opponent_action=None):
         """
-        Exécute une action et retourne le nouvel état.
+        Exécute une action et retourne le nouvel état (API Gymnasium/SB3).
         
         Args:
             action: Action de l'agent principal
@@ -245,7 +258,7 @@ class PingPongEnv(gym.Env):
                              Si None, utilise l'IA interne _get_opponent_action().
         
         Returns:
-            observation, reward, terminated, info
+            observation, reward, terminated, truncated, info
         """
         self.steps += 1
         self.point_winner_side = None  # reset du vainqueur pour ce step
@@ -271,7 +284,7 @@ class PingPongEnv(gym.Env):
         
         if self.ball_in_play:
             # Sub-stepping pour éviter le tunneling (balle qui traverse la raquette)
-            n_substeps = 8
+            n_substeps = 4
             dt_sub = dt / n_substeps
             
             for _ in range(n_substeps):
@@ -396,7 +409,7 @@ class PingPongEnv(gym.Env):
 
                 # Détecter le changement de côté de la balle (avec offset adaptatif basé sur la vélocité)
                 # Si la balle va à droite: offset +ADAPTIVE_BOUNDARY_OFFSET, si elle va à gauche: offset -ADAPTIVE_BOUNDARY_OFFSET
-                velocity_offset = ADAPTIVE_BOUNDARY_OFFSET if self.ball.vel[0] > 0 else -ADAPTIVE_BOUNDARY_OFFSET
+                velocity_offset = ADAPTIVE_BOUNDARY_OFFSET if (self.ball_side == "left") else -ADAPTIVE_BOUNDARY_OFFSET
                 net_center = WIDTH // 2 + velocity_offset
                 if self.ball is not None:
                     current_side = 'left' if self.ball.pos[0] < net_center else 'right'
@@ -463,6 +476,7 @@ class PingPongEnv(gym.Env):
         
         # === DÉTECTION DES FAUTES POUR LES DEUX CÔTÉS ===
         terminated = False
+        truncated = False
         faults = {
             'volley_left': False,
             'volley_right': False,
@@ -531,13 +545,13 @@ class PingPongEnv(gym.Env):
             self.ball_in_play = False
             self._update_scores("Service invalide!")
         
-        # Limite de steps pour éviter les boucles infinies
+        # Limite de steps pour éviter les boucles infinies (timeout => truncated)
         if not terminated and self.steps >= MAX_STEPS_PER_EPISODE:
             faults['timeout'] = True
-            # Considérer comme une perte pour l'agent (l'épisode dure trop longtemps = échec)
+            truncated = True
+            # Considérer comme une perte pour l'agent pour cohérence des scores
             agent_is_left = (self.agent_side == "left")
             self.point_winner_side = 'right' if agent_is_left else 'left'
-            terminated = True
             self.ball_in_play = False
             self._update_scores(f"Timeout après {MAX_STEPS_PER_EPISODE} steps!")
         
@@ -554,12 +568,15 @@ class PingPongEnv(gym.Env):
             "ball_bounces_agent": self._get_agent_side_bounces(),
             "ball_bounces_opponent": self._get_opponent_side_bounces(),
         }
+
+        # Calcul du reward (shaping + terminal) intégré à la step
+        reward = self._compute_shaped_reward(info)
         
         # Rendu si demandé
         if self.render_mode == "human":
             self.render()
         
-        return observation, terminated, info
+        return observation, reward, terminated, truncated, info
     
     def _apply_action(self, paddle, action):
         """
@@ -628,7 +645,7 @@ class PingPongEnv(gym.Env):
             return True
         return False
     
-    def compute_reward(self, info):
+    def _compute_shaped_reward(self, info):
         """
         Compute normalized reward in range [-1, 1].
         Rewards are scaled by dividing by 15.0 (the max absolute reward value).
@@ -830,7 +847,7 @@ class PingPongEnv(gym.Env):
             - 'ball_idx': index de cellule grille pour position balle (int 0-255, grille 16×16)
             - 'paddle_idx': index de cellule grille pour position raquette agent (int 0-255)
             - 'angle_idx': index d'angle discret pour raquette agent (int 0-15, cyclique)
-            - 'continuous': array de features continues [10 valeurs]:
+            - 'continuous': array de features continues [14 valeurs]:
                 [0-1]   Vitesse balle (vx, vy) normalisée
                 [2]     Spin balle normalisé
                 [3-4]   Vitesse raquette agent (vx, vy) normalisée
@@ -839,11 +856,15 @@ class PingPongEnv(gym.Env):
                 [7]     Rebonds sur notre côté (0, 0.5, 1)
                 [8]     Rebonds côté adverse (0, 0.5, 1)
                 [9]     Est-ce un service ? (1 = oui, -1 = non)
-                [10-11] Position balle continue (x, y) normalisée
+                [10-11] Distances normalisées balle→raquette (dx, dy) dans [-1, 1]
                 [12-13] Position raquette agent continue (x, y) normalisée
         """
         agent_is_left = (self.agent_side == "left")
         continuous = np.zeros(14, dtype=np.float32)
+        
+        # Centre de la raquette agent (utilisé pour distances relatives)
+        paddle_center_x = self.agent_paddle.pos[0] + self.agent_paddle.width / 2
+        paddle_center_y = self.agent_paddle.pos[1] + self.agent_paddle.height / 2
         
         if self.ball_in_play and self.ball is not None:
             ball_x = self.ball.pos[0]
@@ -881,10 +902,11 @@ class PingPongEnv(gym.Env):
             
             # Est-ce un service ?
             continuous[9] = 1.0 if self.ball.service is not None else -1.0
-
-            # Positions balle continue normalisée
-            continuous[10] = (ball_x / WIDTH) * 2 - 1
-            continuous[11] = (ball_y / HEIGHT) * 2 - 1
+            
+            # Distances relatives balle→raquette normalisées dans [-1, 1]
+            # dx = (ball_x - paddle_center_x) / (WIDTH/2), dy = (ball_y - paddle_center_y) / (HEIGHT/2)
+            continuous[10] = np.clip(((ball_x - paddle_center_x) / (WIDTH / 2.0)), -1.0, 1.0)
+            continuous[11] = np.clip(((ball_y - paddle_center_y) / (HEIGHT / 2.0)), -1.0, 1.0)
         else:
             # Balle pas en jeu, position par défaut au centre
             ball_idx = self._position_to_grid_index(WIDTH // 2, HEIGHT // 2)
@@ -894,9 +916,7 @@ class PingPongEnv(gym.Env):
             continuous[11] = 0.0
         
         # Index de grille pour la raquette agent
-        paddle_x = self.agent_paddle.pos[0] + self.agent_paddle.width / 2
-        paddle_y = self.agent_paddle.pos[1] + self.agent_paddle.height / 2
-        paddle_idx = self._position_to_grid_index(paddle_x, paddle_y)
+        paddle_idx = self._position_to_grid_index(paddle_center_x, paddle_center_y)
         
         # Vitesse raquette agent normalisée
         max_paddle_vel = 500.0
@@ -904,8 +924,8 @@ class PingPongEnv(gym.Env):
         continuous[4] = np.clip(self.agent_paddle.vel[1] / max_paddle_vel, -1, 1)
         
         # Position Raquette Continue [-1, 1]
-        continuous[12] = (paddle_x / WIDTH) * 2 - 1
-        continuous[13] = (paddle_y / HEIGHT) * 2 - 1
+        continuous[12] = (paddle_center_x / WIDTH) * 2 - 1
+        continuous[13] = (paddle_center_y / HEIGHT) * 2 - 1
 
         # Angle raquette en index discret cyclique [0-15]
         # Angle [-180, 180] -> 16 bins (22.5 degrés par bin)
@@ -915,10 +935,11 @@ class PingPongEnv(gym.Env):
 
         #print(f"Obs - BallIdx: {ball_idx}, PaddleIdx: {paddle_idx}, AngleIdx: {angle_idx}, Continuous: {continuous}")
         
+        # Retourner au format SB3 Dict (chaque valeur doit être un numpy array)
         return {
-            'ball_idx': ball_idx,
-            'paddle_idx': paddle_idx,
-            'angle_idx': angle_idx,
+            'ball_idx': np.array([ball_idx], dtype=np.int64),
+            'paddle_idx': np.array([paddle_idx], dtype=np.int64),
+            'angle_idx': np.array([angle_idx], dtype=np.int64),
             'continuous': continuous
         }
 
@@ -1064,6 +1085,11 @@ class PingPongEnv(gym.Env):
                 pygame.display.set_caption("Ping-Pong RL Training")
                 self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
             self.clock = pygame.time.Clock()
+        
+        # Consommer les événements Pygame pour éviter les bugs de clic
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
         
         # Import des fonctions de rendu
         from graphics.renderer import (

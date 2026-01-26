@@ -36,11 +36,10 @@ BALL_RADIUS = 10
 # --- Physique ---
 GRAVITY = 9.81          # gravité (m/s²)
 RESTITUTION = 0.9       # perte d'énergie au rebond
-FPS = 120                # FPS actuel (peut changer), la physique doit rester identique
-FPS_BASE = 60           # Référence pour les calculs de vitesse (garde la même vitesse qu'à 60 FPS)
-BALL_SPEED_SCALE = 0.8  # <1.0 pour ralentir la balle (appliqué aux équations de mouvement)
-PADDLE_SPEED_SCALE = 0.9  # <1.0 pour ralentir les déplacements de raquette
-PADDLE_ROT_SCALE = 0.9    # <1.0 pour réduire la vitesse de rotation de la raquette
+FPS = 120             # FPS unique pour rendu et physique
+BALL_SPEED_SCALE = 1.1  # <1.0 pour ralentir la balle (appliqué aux équations de mouvement)
+PADDLE_SPEED_SCALE = 1.0  # <1.0 pour ralentir les déplacements de raquette
+PADDLE_ROT_SCALE = 2.0    # <1.0 pour réduire la vitesse de rotation de la raquette
 
 # --- Effet Magnus (balle de ping-pong) ---
 BALL_MASS = 0.0027          # masse de la balle (kg) — 2.7g
@@ -57,7 +56,7 @@ OUT_MARGIN = 12  # pixels — marge autour de la table pour détecter une sortie
 
 # --- Constante de ping pong de vitesse utile --- 
 V_MAX_REEL = 120 # m/s
-VPX_FRAME_MAX = V_MAX_REEL * PIXELS_PER_METER / FPS_BASE
+VPX_FRAME_MAX = V_MAX_REEL * PIXELS_PER_METER / FPS
 # Vitesse raquette : 4.0 m/s en réel
 SPEED_RACKET = 4.0 * PIXELS_PER_METER  # pixels/s (sera multiplié par dt=1/FPS)
 
