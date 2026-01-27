@@ -82,23 +82,78 @@ def main():
                         help='GAE lambda')
     parser.add_argument('--ent-coef', type=float, default=0.01,
                         help='Coefficient d\'entropie (exploration)')
+    parser.add_argument('--log-name', type=str, default=None,
+                        help='Nom de la run TensorBoard (ignoré si on charge un modèle)')
     
     args = parser.parse_args()
+    
+    # === DÉTERMINER LE LOG_NAME ===
+    # Si on charge un modèle, extraire son log_name original du chemin
+    if args.load and os.path.exists(args.load):
+        detected_log_name = None
+        
+        # Cas 1: modèle dans best/log_name/
+        if '/best/' in args.load or '\\best\\' in args.load:
+            parts = args.load.replace('\\', '/').split('/best/')
+            if len(parts) > 1:
+                detected_log_name = parts[1].split('/')[0]
+        
+        # Cas 2: modèle dans checkpoints/log_name/
+        elif '/checkpoints/' in args.load or '\\checkpoints\\' in args.load:
+            parts = args.load.replace('\\', '/').split('/checkpoints/')
+            if len(parts) > 1:
+                detected_log_name = parts[1].split('/')[0]
+        
+        # Cas 3: modèle nommé ppo_pingpong_log_name_final.zip
+        elif 'ppo_pingpong_' in args.load and '_final.zip' in args.load:
+            start = args.load.index('ppo_pingpong_') + len('ppo_pingpong_')
+            end = args.load.index('_final.zip')
+            detected_log_name = args.load[start:end]
+        
+        # Si on détecte le log_name, l'utiliser et ignorer --log-name
+        if detected_log_name:
+            args.log_name = detected_log_name
+            print(f"🔍 Log_name détecté du modèle chargé: {detected_log_name}")
     
     # Créer les dossiers nécessaires
     os.makedirs('models_sb3', exist_ok=True)
     os.makedirs('logs_sb3', exist_ok=True)
     
+    # === DÉTERMINER LES CHEMINS (APRÈS détection du log_name) ===
+    if args.log_name:
+        tensorboard_log = f"./logs_sb3/tensorboard/{args.log_name}/"
+        checkpoint_path = f"./models_sb3/checkpoints/{args.log_name}/"
+        best_model_path = f"./models_sb3/best/{args.log_name}/"
+        monitor_log_path = f"./logs_sb3/{args.log_name}/"
+        eval_log_path = f"./logs_sb3/{args.log_name}/eval/"
+        final_model_name = f"ppo_pingpong_{args.log_name}_final.zip"
+        print(f"📊 Run TensorBoard: {args.log_name}")
+        print(f"💾 Checkpoints: {checkpoint_path}")
+        print(f"🏆 Best model: {best_model_path}")
+    else:
+        tensorboard_log = "./logs_sb3/tensorboard/"
+        checkpoint_path = "./models_sb3/checkpoints/"
+        best_model_path = "./models_sb3/best/"
+        monitor_log_path = "./logs_sb3/"
+        eval_log_path = "./logs_sb3/eval/"
+        final_model_name = "ppo_pingpong_final.zip"
+        print(f"📊 Run TensorBoard: auto-numbered (PPO_1, PPO_2, ...)")
+    
+    os.makedirs(checkpoint_path, exist_ok=True)
+    os.makedirs(best_model_path, exist_ok=True)
+    os.makedirs(monitor_log_path, exist_ok=True)
+    os.makedirs(eval_log_path, exist_ok=True)
+    
     # === CRÉER L'ENVIRONNEMENT ===
     print("="*70)
-    print("🎮 Création de l'environnement Ping-Pong")
+    print("Création de l'environnement Ping-Pong")
     print("="*70)
     
     render_mode = "human" if args.render else None
     env = PingPongEnv(render_mode=render_mode, agent_side="left", static_spawn=False)
     
     # Wrapper Monitor pour logging automatique
-    env = Monitor(env, 'logs_sb3')
+    env = Monitor(env, monitor_log_path)
     
     # === VÉRIFICATION DE L'ENVIRONNEMENT (optionnel) ===
     if args.check_env:
@@ -117,7 +172,7 @@ def main():
     policy_kwargs = dict(
         # Notre custom feature extractor avec embeddings
         features_extractor_class=HybridFeatureExtractor,
-        features_extractor_kwargs=dict(embed_dim=args.embed_dim),
+        features_extractor_kwargs=dict(embed_dim=args.embed_dim), # les arguments de la class au dessus
         
         # Architecture des réseaux Actor/Critic après le feature extractor
         # net_arch: couches partagées puis séparées pour pi (policy) et vf (value function)
@@ -141,11 +196,13 @@ def main():
     print(f"  • ent_coef: {args.ent_coef}")
     
     # === CRÉER OU CHARGER LE MODÈLE ===
-    print("\n🤖 Initialisation du modèle PPO")
+    print("\nInitialisation du modèle PPO")
     print("="*70)
     
     if args.load and os.path.exists(args.load):
         print(f"📂 Chargement du modèle depuis: {args.load}")
+        if args.log_name:
+            print(f"⚠️  --log-name ignoré (on continue avec la run existante)")
         model = PPO.load(
             args.load,
             env=env,
@@ -174,7 +231,7 @@ def main():
             vf_coef=0.5,
             max_grad_norm=0.5,
             verbose=1,
-            tensorboard_log="./logs_sb3/tensorboard/"
+            tensorboard_log=tensorboard_log
         )
         print("✅ Nouveau modèle créé!")
     
@@ -185,7 +242,7 @@ def main():
     # Sauvegarde périodique
     checkpoint_callback = CheckpointCallback(
         save_freq=args.save_freq,
-        save_path='./models_sb3/checkpoints/',
+        save_path=checkpoint_path,
         name_prefix='ppo_pingpong',
         save_replay_buffer=False,
         save_vecnormalize=False,
@@ -193,12 +250,12 @@ def main():
     
     # Environnement d'évaluation (sans render)
     eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False), 
-                       'logs_sb3/eval')
+                       eval_log_path)
     
     eval_callback = EvalCallback(
         eval_env,
-        best_model_save_path='./models_sb3/best/',
-        log_path='./logs_sb3/eval/',
+        best_model_save_path=best_model_path,
+        log_path=eval_log_path,
         eval_freq=5000,
         deterministic=True,
         render=False,
@@ -221,14 +278,15 @@ def main():
         model.learn(
             total_timesteps=args.timesteps,
             callback=callbacks,
-            progress_bar=True
+            progress_bar=True,
+            reset_num_timesteps=False  # Continuer la même run TensorBoard si on charge un modèle
         )
     except KeyboardInterrupt:
         print("\n⚠️  Entraînement interrompu par l'utilisateur")
     
     # === SAUVEGARDE FINALE ===
     print("\n💾 Sauvegarde du modèle final...")
-    final_path = './models_sb3/ppo_pingpong_final.zip'
+    final_path = f'./models_sb3/{final_model_name}'
     model.save(final_path)
     print(f"✅ Modèle sauvegardé: {final_path}")
     
@@ -250,6 +308,8 @@ if __name__ == "__main__":
     import torch as th
     main()
 
+# Creer un nouveau modèle:
+# python train_sb3.py --log-name nom_modele_sans_guillemets --timesteps 200000
 
 # pour continuer l'entraînement à partir du modèle final:
 # python train_sb3.py --load models_sb3/ppo_pingpong_final.zip --timesteps 100000

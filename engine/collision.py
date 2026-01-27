@@ -417,11 +417,14 @@ def check_ball_paddle(ball, paddle, screen):
     # Sauvegarder la position avant collision pour détecter si collision a eu lieu
     old_pos = ball.pos.copy()
     
+
     check_rect_collision(ball, paddle, est_mousse=True, est_table=False, a=0.35, screen=screen)
+
     
     # Si la position a changé, une collision a eu lieu
     if not np.array_equal(old_pos, ball.pos):
         paddle.can_hit = False  # La raquette ne peut plus toucher la balle
+
 
 def check_ball_net(ball, net, restitution=RESTITUTION, spin_factor=0.3, spin_damping=0.8):
     """

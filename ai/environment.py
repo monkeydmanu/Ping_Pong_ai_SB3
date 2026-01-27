@@ -50,7 +50,7 @@ class PingPongEnv(gym.Env):
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": FPS}
     
-    def __init__(self, render_mode=None, agent_side="left", player1_mouse_control=False, static_spawn=False):
+    def __init__(self, render_mode=None, agent_side="left", player1_mouse_control=False, player2_mouse_control=False, static_spawn=False):
         """
         Initialise l'environnement Ping-Pong.
         
@@ -59,6 +59,7 @@ class PingPongEnv(gym.Env):
             agent_side (str): Côté de l'agent ("left" ou "right")
             player1_mouse_control (bool): Si True, le joueur 1 est contrôlé à la souris
                 (dans ce cas, on n'applique que la rotation, pas le mouvement)
+            player2_mouse_control (bool): Si True, le joueur 2 est contrôlé à la souris
             static_spawn (bool): Si True, la balle apparaît immobile sans gravité jusqu'au premier contact raquette.
         """
         super().__init__()
@@ -100,8 +101,9 @@ class PingPongEnv(gym.Env):
             dtype=np.float32
         )
         
-        # === Contrôle du joueur 1 ===
+        # === Contrôle du joueur 1 et 2 ===
         self.player1_mouse_control = player1_mouse_control
+        self.player2_mouse_control = player2_mouse_control
         
         # Initialisation Pygame (optionnel pour le rendu)
         self.screen = None
@@ -189,12 +191,12 @@ class PingPongEnv(gym.Env):
             # Normal: x=50 (loin), Center: x=net_center (600)
             paddle_x = net_center - 240 - 100 * (self.training_phase)
             self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
-            self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, 10, x_min=net_center, x_max=WIDTH)
+            self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
         else:
             # Normal: x=WIDTH-60 (loin), Center: x=net_center (600)
             paddle_x = net_center + 240 + 100 * (self.training_phase)
             self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
-            self.opponent_paddle = Paddle(50, TABLE_Y - TABLE_WIDTH_PX//2 - OUT_MARGIN - RACKET_HEIGHT_PX//2, x_min=0, x_max=net_center)
+            self.opponent_paddle = Paddle(50, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
         
         # Randomiser le service
         self.is_agent_service = True
@@ -260,6 +262,10 @@ class PingPongEnv(gym.Env):
         Returns:
             observation, reward, terminated, truncated, info
         """
+
+        # affichage vel joueur droite
+        #print(f"Vel joueur droite dans step(): {self.opponent_paddle.vel}")
+        
         self.steps += 1
         self.point_winner_side = None  # reset du vainqueur pour ce step
         agent_is_left = (self.agent_side == "left")
@@ -277,6 +283,7 @@ class PingPongEnv(gym.Env):
             
         self._apply_action(self.opponent_paddle, actual_opponent_action)
         
+
         # === Mettre à jour la physique ===
         dt = 1.0 / FPS
         self.agent_paddle.update(dt, speed_factor=self._speed_factor)
@@ -587,15 +594,20 @@ class PingPongEnv(gym.Env):
         - action_y ∈ [-1, 1] → paddle.vel[1] = action_y * paddle.speed
         - action_rot ∈ [-1, 1] → paddle.angle += action_rot * max_rotation_speed * dt
         
-        Si player1_mouse_control est True et c'est la raquette agent,
+        Si player1_mouse_control ou player2_mouse_control est True pour cette raquette,
         on n'applique que la rotation (mouvement géré par la souris).
         """
         move_x, move_y, rotate = action
         
-        # Si c'est l'agent et que le contrôle souris est activé, sauter les mouvements
+        # Déterminer si cette raquette est contrôlée par la souris
+        is_mouse_controlled = False
         if paddle == self.agent_paddle and self.player1_mouse_control:
-            pass
-        else:
+            is_mouse_controlled = True
+        elif paddle == self.opponent_paddle and self.player2_mouse_control:
+            is_mouse_controlled = True
+        
+        # Si contrôlé par souris, ne pas écraser la vélocité
+        if not is_mouse_controlled:
             # Contrôle CONTINU: appliquer directement l'action à la vélocité
             # action ∈ [-1, 1] * speed → paddle bouge proportionnellement à l'action
             paddle.vel[0] = float(move_x) * paddle.speed
@@ -632,10 +644,11 @@ class PingPongEnv(gym.Env):
         
         move_x = 0.0
         
-        return np.array([move_x, 0, 0.0], dtype=np.float32) # adversaire qui joue pas
+        return np.array([move_x, move_y, 0.0], dtype=np.float32) # adversaire qui joue pas
     
     def _check_paddle_collision(self, paddle, who):
         """Vérifie la collision balle-raquette et met à jour last_hit_by."""
+
         old_pos = self.ball.pos.copy()
         check_ball_paddle(self.ball, paddle, None)
         

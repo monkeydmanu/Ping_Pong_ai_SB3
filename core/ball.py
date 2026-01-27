@@ -86,6 +86,7 @@ def spawn_ball_left(table):
         angular_speed=0
     )
     ball.service = 'left'  # Service depuis la gauche
+
     return ball
 
 

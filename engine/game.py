@@ -21,7 +21,7 @@ class Game:
     Utilise PingPongEnv pour la logique du jeu.
     """
     
-    def __init__(self, player1_type="human", player2_type="human", mouse_control_p1=False):
+    def __init__(self, player1_type="human", player2_type="human", mouse_control_p1=False, mouse_control_p2=False, agent_side="left"):
         """
         Initialise le jeu.
         
@@ -37,12 +37,13 @@ class Game:
         self.running = True
         
         # Environnement du jeu (gère toute la logique)
-        self.env = PingPongEnv(render_mode=None, player1_mouse_control=mouse_control_p1)
+        self.env = PingPongEnv(render_mode=None, player1_mouse_control=mouse_control_p1, player2_mouse_control=mouse_control_p2, agent_side=agent_side)
         
         # Types de joueurs
         self.player1_type = player1_type  # "human" ou "ai"
         self.player2_type = player2_type
         self.player1_mouse_control = mouse_control_p1  # Contrôle souris du joueur 1
+        self.player2_mouse_control = mouse_control_p2  # Contrôle souris du joueur 2
         
         # Affichage
         self.font = pygame.font.Font(None, 36)
@@ -60,6 +61,7 @@ class Game:
         self.last_paddle_vel = (0, 0)
         self.last_spin = 0
         self.displayed_paddle_vel = (0, 0)  # Vélocité réelle du paddle pour affichage
+        self.displayed_opponent_paddle_vel = (0, 0)  # Vélocité réelle du paddle adverse pour affichage
         
         # État de la souris pour joueur 1 (contrôle souris)
         self.mouse_pos = (WIDTH // 4, HEIGHT // 2)  # Position initiale de la souris
@@ -67,9 +69,11 @@ class Game:
         
         # Ancienne position de la raquette agent pour calculer la vélocité
         self.last_agent_paddle_pos = np.array([WIDTH // 4, HEIGHT // 2], dtype=float)
+        self.last_opponent_paddle_pos = np.array([3 * WIDTH // 4, HEIGHT // 2], dtype=float)
         
         # Historique de vélocité pour lissage (derniers 10 frames)
         self.agent_paddle_vel_history = []
+        self.opponent_paddle_vel_history = []
         
         # Réinitialiser l'environnement
         self.env.reset()
@@ -179,25 +183,59 @@ class Game:
         """Récupère l'input du joueur 2 (droite)."""
         if self.player2_type != "human":
             return np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        
+
+        # === MODE SOURIS POUR JOUEUR 2 ===
+        if self.player2_mouse_control:
+            mouse_x, mouse_y = self.mouse_pos
+            paddle = self.env.opponent_paddle
+            new_x = mouse_x - paddle.width / 2
+            new_y = mouse_y - paddle.height / 2
+            new_x = max(paddle.x_min, min(new_x, paddle.x_max - paddle.width))
+            new_y = max(0, min(new_y, HEIGHT - paddle.height))
+
+            dt = 1.0 / FPS
+            vel_x = (new_x - self.last_opponent_paddle_pos[0]) / dt
+            vel_y = (new_y - self.last_opponent_paddle_pos[1]) / dt
+
+            self.opponent_paddle_vel_history.append(np.array([vel_x, vel_y]))
+            if len(self.opponent_paddle_vel_history) > 10:
+                self.opponent_paddle_vel_history.pop(0)
+            recent_vels = self.opponent_paddle_vel_history[-10:] if self.opponent_paddle_vel_history else [np.array([0, 0])]
+            avg_vel = np.mean(recent_vels, axis=0)
+
+            paddle.pos[0] = new_x
+            paddle.pos[1] = new_y
+            paddle.vel = avg_vel
+
+            self.displayed_opponent_paddle_vel = tuple(avg_vel)
+
+            self.last_opponent_paddle_pos = np.array([new_x, new_y], dtype=float)
+
+
+            rotate = 0.0
+            if pygame.mouse.get_pressed()[0]:
+                rotate = -1.0
+            elif pygame.mouse.get_pressed()[2]:
+                rotate = 1.0
+
+            return np.array([0.0, 0.0, rotate], dtype=np.float32)
+
+        # === MODE CLAVIER POUR JOUEUR 2 ===
         keys = pygame.key.get_pressed()
         move_x = 0.0
         move_y = 0.0
         rotate = 0.0
         
-        # Mouvement vertical (O=haut, L=bas)
         if keys[pygame.K_o]:
             move_y = -1.0
         elif keys[pygame.K_l]:
             move_y = 1.0
         
-        # Mouvement horizontal (K=gauche, M=droite)
         if keys[pygame.K_k]:
             move_x = -1.0
         elif keys[pygame.K_m]:
             move_x = 1.0
         
-        # Rotation (I=gauche, P=droite)
         if keys[pygame.K_i]:
             rotate = -1.0
         elif keys[pygame.K_p]:
@@ -209,17 +247,18 @@ class Game:
     def update(self):
         """Met à jour l'état du jeu via environment.py."""
         # Appeler env.step() avec les actions des deux joueurs (pas de reward en mode jeu)
-        obs, terminated, info = self.env.step(
+        obs, reward, terminated, truncated, info = self.env.step(
             self.action_p1,
             self.action_p2
         )
+        done = terminated or truncated
         
         # Récupérer les scores depuis l'info
         self.score_left = info.get('score_left', 0)
         self.score_right = info.get('score_right', 0)
         
         # Si le point est terminé
-        if terminated:
+        if done:
             self.point_message = info.get('point_message', '')
             self.message_timer = 120  # 2 secondes à 60 fps
             # Réinitialiser pour le prochain point
@@ -270,6 +309,12 @@ class Game:
         mouse_debug = f"Souris: ({self.mouse_pos[0]:.0f}, {self.mouse_pos[1]:.0f}) | Paddle vel: ({paddle_vel[0]:.1f}, {paddle_vel[1]:.1f})"
         mouse_text_surface = self.font.render(mouse_debug, True, (0, 255, 0))
         self.screen.blit(mouse_text_surface, (10, 20))
+
+        # Affichage DEBUG souris - Position et vélocité adversaire
+        paddle_vel = self.env.opponent_paddle.vel if self.env.opponent_paddle else [0, 0]
+        mouse_debug = f"Souris: ({self.mouse_pos[0]:.0f}, {self.mouse_pos[1]:.0f}) | Paddle vel: ({paddle_vel[0]:.1f}, {paddle_vel[1]:.1f})"
+        mouse_text_surface = self.font.render(mouse_debug, True, (0, 255, 0))
+        self.screen.blit(mouse_text_surface, (10, 50))
         
         pygame.display.flip()
     
