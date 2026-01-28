@@ -25,19 +25,25 @@ from ai.feature_extractor import HybridFeatureExtractor
 
 class CurriculumCallback(BaseCallback):
     """
-    Callback pour mettre à jour les phases de curriculum learning au fil de l'entraînement.
-    Appelle env.set_episode_count() à chaque reset d'épisode.
+    Callback pour :
+    - suivre le numéro d'épisode (persistant entre relances d'entraînement)
+    - mettre à jour le curriculum via env.set_episode_count()
+    - sauvegarder le numéro d'épisode dans episode_count.txt
+    - logger le numéro d'épisode dans TensorBoard (train/episode_count)
     """
-    def __init__(self, verbose=0):
+
+    def __init__(self, start_episode_count: int = 0, monitor_dir: str = None, verbose: int = 0):
         super(CurriculumCallback, self).__init__(verbose)
-        self.episode_count = 0
-    
+        self.episode_count = start_episode_count
+        self.monitor_dir = monitor_dir
+
     def _on_step(self) -> bool:
         # Détecter les resets d'épisode via dones
         if self.locals.get("dones") is not None:
             dones = self.locals["dones"]
             if any(dones):
                 self.episode_count += 1
+
                 # Mettre à jour la phase dans l'env
                 if hasattr(self.training_env, 'envs'):
                     # VecEnv
@@ -47,18 +53,91 @@ class CurriculumCallback(BaseCallback):
                 elif hasattr(self.training_env, 'set_episode_count'):
                     # Env simple
                     self.training_env.set_episode_count(self.episode_count)
-                
+
+                # Sauvegarder dans episode_count.txt
+                if self.monitor_dir:
+                    _save_episode_count(self.monitor_dir, self.episode_count)
+
+                # Log TensorBoard
+                if self.model is not None and self.model.logger is not None:
+                    self.model.logger.record("train/episode_count", float(self.episode_count))
+
                 if self.verbose > 0 and self.episode_count % 100 == 0:
                     print(f"📊 Episode {self.episode_count}: Phase update")
-        
+
         return True
+
+
+def _detect_log_name_from_path(model_path: str) -> str:
+    """Détecte le log_name depuis le chemin du modèle chargé.
+    
+    Gère 3 cas:
+    1. models_sb3/best/[log_name]/fichier.zip
+    2. models_sb3/checkpoints/[log_name]/fichier.zip
+    3. models_sb3/ppo_pingpong_[log_name]_final.zip
+    """
+    if not model_path or not os.path.exists(model_path):
+        return None
+    
+    normalized = model_path.replace('\\', '/')
+    
+    # Cas 1 & 2: best/ ou checkpoints/
+    for folder in ['/best/', '/checkpoints/']:
+        if folder in normalized:
+            parts = normalized.split(folder)
+            if len(parts) > 1:
+                # Extraire le nom du dossier après best/ ou checkpoints/
+                log_name = parts[1].split('/')[0]
+                if log_name and log_name.endswith('.zip'):
+                    # Si c'est directement le fichier, pas de sous-dossier
+                    continue
+                return log_name
+    
+    # Cas 3: ppo_pingpong_[log_name]_final.zip
+    if 'ppo_pingpong_' in normalized and '_final.zip' in normalized:
+        start = normalized.index('ppo_pingpong_') + len('ppo_pingpong_')
+        end = normalized.index('_final.zip')
+        return normalized[start:end]
+    
+    return None
+
+
+def _load_episode_count(monitor_dir: str) -> int:
+    """Retourne le nombre d'épisodes déjà terminés en lisant episode_count.txt.
+
+    - Si le fichier n'existe pas → 0
+    - Le fichier contient un seul nombre entier
+    """
+    episode_count_file = os.path.join(monitor_dir, "episode_count.txt")
+    if not os.path.isfile(episode_count_file):
+        return 0
+
+    try:
+        with open(episode_count_file, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        if content.isdigit():
+            return int(content)
+        return 0
+    except Exception:
+        # En cas de souci de lecture, ne pas bloquer l'entraînement
+        return 0
+
+
+def _save_episode_count(monitor_dir: str, episode_count: int) -> None:
+    """Sauvegarde le numéro d'épisode dans episode_count.txt."""
+    try:
+        episode_count_file = os.path.join(monitor_dir, "episode_count.txt")
+        with open(episode_count_file, "w", encoding="utf-8") as f:
+            f.write(str(episode_count))
+    except Exception as e:
+        print(f"⚠️  Erreur lors de la sauvegarde de episode_count.txt : {e}")
 
 
 def main():
     parser = argparse.ArgumentParser(description='Entraînement PPO avec SB3')
     parser.add_argument('--timesteps', type=int, default=100000, 
                         help='Nombre total de timesteps d\'entraînement')
-    parser.add_argument('--save-freq', type=int, default=10000,
+    parser.add_argument('--save-freq', type=int, default=20000,
                         help='Fréquence de sauvegarde (en timesteps)')
     parser.add_argument('--load', type=str, default=None,
                         help='Chemin vers un modèle à charger pour continuer l\'entraînement')
@@ -89,31 +168,13 @@ def main():
     
     # === DÉTERMINER LE LOG_NAME ===
     # Si on charge un modèle, extraire son log_name original du chemin
-    if args.load and os.path.exists(args.load):
-        detected_log_name = None
-        
-        # Cas 1: modèle dans best/log_name/
-        if '/best/' in args.load or '\\best\\' in args.load:
-            parts = args.load.replace('\\', '/').split('/best/')
-            if len(parts) > 1:
-                detected_log_name = parts[1].split('/')[0]
-        
-        # Cas 2: modèle dans checkpoints/log_name/
-        elif '/checkpoints/' in args.load or '\\checkpoints\\' in args.load:
-            parts = args.load.replace('\\', '/').split('/checkpoints/')
-            if len(parts) > 1:
-                detected_log_name = parts[1].split('/')[0]
-        
-        # Cas 3: modèle nommé ppo_pingpong_log_name_final.zip
-        elif 'ppo_pingpong_' in args.load and '_final.zip' in args.load:
-            start = args.load.index('ppo_pingpong_') + len('ppo_pingpong_')
-            end = args.load.index('_final.zip')
-            detected_log_name = args.load[start:end]
-        
-        # Si on détecte le log_name, l'utiliser et ignorer --log-name
+    if args.load:
+        detected_log_name = _detect_log_name_from_path(args.load)
         if detected_log_name:
             args.log_name = detected_log_name
             print(f"🔍 Log_name détecté du modèle chargé: {detected_log_name}")
+        elif not os.path.exists(args.load):
+            print(f"⚠️  Fichier {args.load} introuvable!")
     
     # Créer les dossiers nécessaires
     os.makedirs('models_sb3', exist_ok=True)
@@ -148,12 +209,54 @@ def main():
     print("="*70)
     print("Création de l'environnement Ping-Pong")
     print("="*70)
-    
+
+    # Reprendre le numéro d'épisode si on continue la même run (monitor.csv existant)
+    start_episode_count = _load_episode_count(monitor_log_path)
+    print(f"ℹ️  Monitor utilisé : {monitor_log_path}")
+    print(f"ℹ️  Épisodes déjà terminés (monitor.csv) : {start_episode_count}")
+    if start_episode_count > 0:
+        print(f"🔄 Reprise à l'épisode {start_episode_count}")
+
+
+    import shutil
+    monitor_file = os.path.join(monitor_log_path, "monitor.csv")
+    backup_monitor_file = None
+    # Sauvegarder l'ancien monitor.csv s'il existe
+    if os.path.isfile(monitor_file):
+        backup_monitor_file = monitor_file + ".bak"
+        shutil.copyfile(monitor_file, backup_monitor_file)
+
     render_mode = "human" if args.render else None
-    env = PingPongEnv(render_mode=render_mode, agent_side="left", static_spawn=False)
-    
-    # Wrapper Monitor pour logging automatique
+    env = PingPongEnv(render_mode=render_mode, agent_side="left", static_spawn=False, game_mode=False)
+
+    # Initialiser l'environnement avec le bon compteur d'épisodes dès le début
+    if start_episode_count > 0:
+        env.set_episode_count(start_episode_count)
+        print(f"✅ Phase de curriculum initialisée: Phase {env.training_phase}")
+
+    # Wrapper Monitor pour logging automatique (SB3 va écraser monitor.csv)
     env = Monitor(env, monitor_log_path)
+
+    # Fusionner l'ancien monitor.csv avec le nouveau si besoin
+    if backup_monitor_file and os.path.isfile(monitor_file):
+        try:
+            with open(backup_monitor_file, "r", encoding="utf-8") as f_old:
+                old_lines = f_old.readlines()
+            with open(monitor_file, "r", encoding="utf-8") as f_new:
+                new_lines = f_new.readlines()
+            # En-tête = 2 lignes, puis données
+            merged_lines = old_lines[:2]
+            # Ajoute toutes les anciennes données (sauf en-tête)
+            merged_lines += [l for l in old_lines[2:] if l.strip()]
+            # Ajoute les nouvelles données (sauf en-tête)
+            merged_lines += [l for l in new_lines[2:] if l.strip()]
+            # Écrit le fichier fusionné
+            with open(monitor_file, "w", encoding="utf-8") as f_out:
+                f_out.writelines(merged_lines)
+            os.remove(backup_monitor_file)
+            print(f"✅ Fusion de l'historique monitor.csv terminée.")
+        except Exception as e:
+            print(f"⚠️  Erreur lors de la fusion de monitor.csv : {e}")
     
     # === VÉRIFICATION DE L'ENVIRONNEMENT (optionnel) ===
     if args.check_env:
@@ -199,6 +302,8 @@ def main():
     print("\nInitialisation du modèle PPO")
     print("="*70)
     
+    from stable_baselines3.common.logger import configure
+
     if args.load and os.path.exists(args.load):
         print(f"📂 Chargement du modèle depuis: {args.load}")
         if args.log_name:
@@ -215,7 +320,6 @@ def main():
     else:
         if args.load:
             print(f"⚠️  Fichier {args.load} introuvable, création d'un nouveau modèle")
-        
         model = PPO(
             "MultiInputPolicy",  # OBLIGATOIRE pour Dict observation space
             env,
@@ -234,10 +338,14 @@ def main():
             tensorboard_log=tensorboard_log
         )
         print("✅ Nouveau modèle créé!")
+
+    # Forcer l'écriture des logs tensorboard dans le dossier sans PPO_0
+    new_logger = configure(tensorboard_log, ["tensorboard"])
+    model.set_logger(new_logger)
     
     # === CALLBACKS ===
     # Curriculum learning: met à jour les phases d'entraînement
-    curriculum_callback = CurriculumCallback(verbose=1)
+    curriculum_callback = CurriculumCallback(start_episode_count=start_episode_count, monitor_dir=monitor_log_path, verbose=1)
     
     # Sauvegarde périodique
     checkpoint_callback = CheckpointCallback(
@@ -249,7 +357,7 @@ def main():
     )
     
     # Environnement d'évaluation (sans render)
-    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False), 
+    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False, game_mode=False), 
                        eval_log_path)
     
     eval_callback = EvalCallback(
@@ -259,7 +367,7 @@ def main():
         eval_freq=5000,
         deterministic=True,
         render=False,
-        n_eval_episodes=5,
+        n_eval_episodes=20,
     )
     
     callbacks = [curriculum_callback, checkpoint_callback, eval_callback]

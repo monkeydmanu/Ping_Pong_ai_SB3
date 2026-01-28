@@ -37,7 +37,7 @@ class Game:
         self.running = True
         
         # Environnement du jeu (gère toute la logique)
-        self.env = PingPongEnv(render_mode=None, player1_mouse_control=mouse_control_p1, player2_mouse_control=mouse_control_p2, agent_side=agent_side)
+        self.env = PingPongEnv(render_mode=None, player1_mouse_control=mouse_control_p1, player2_mouse_control=mouse_control_p2, agent_side=agent_side, game_mode=True)
         
         # Types de joueurs
         self.player1_type = player1_type  # "human" ou "ai"

@@ -75,30 +75,87 @@ class Ball:
         self.angular_speed *= (1 - 0.1 * dt_scaled)  # ~10% par seconde
 
 
-def spawn_ball_left(table):
+def spawn_ball_left(table, game_mode=False, train_phase=0):
     """Crée une balle au bord gauche de la table (service gauche)."""
     x_table, y_table, w_table, h_table = table.get_rect()
-    ball = Ball(
-        x=x_table + 150,  # Bord gauche de la table # + 30
-        y=y_table - 220,  # Au-dessus de la table
+
+    if game_mode:
+        ball = Ball(
+        x=x_table + 30,  # Bord gauche de la table # + 30
+        y=y_table - 300,  # Au-dessus de la table
         vx=0,
         vy=0,
         angular_speed=0
     )
+    else:
+        if train_phase == 0:
+            ball = Ball(
+                x=x_table + 150,  # Bord gauche de la table # + 30
+                y=y_table - 220,  # Au-dessus de la table
+                vx=0,
+                vy=0,
+                angular_speed=0
+            )
+        elif train_phase == 1:
+            ball = Ball(
+                x=x_table + 80,  # Bord gauche de la table # + 30
+                y=y_table - 300,  # Au-dessus de la table
+                vx=0,
+                vy=0,
+                angular_speed=0
+            )
+        else:
+            ball = Ball(
+                x=x_table + 30,  # Bord gauche de la table # + 30
+                y=y_table - 300,  # Au-dessus de la table
+                vx=0,
+                vy=0,
+                angular_speed=0
+            )
+
     ball.service = 'left'  # Service depuis la gauche
 
     return ball
 
 
-def spawn_ball_right(table):
+def spawn_ball_right(table, game_mode=False, train_phase=0):
     """Crée une balle au bord droit de la table (service droite)."""
     x_table, y_table, w_table, h_table = table.get_rect()
-    ball = Ball(
+
+    if game_mode:
+        ball = Ball(
         x=x_table + w_table - 30,  # Bord droit de la table
-        y=y_table - 220,  # Au-dessus de la table
+        y=y_table - 300,  # Au-dessus de la table
         vx=0,
         vy=0,
         angular_speed=0
     )
+    else:
+        if train_phase == 0:
+            ball = Ball(
+                x=x_table + w_table - 150,  # Bord droit de la table
+                y=y_table - 220,  # Au-dessus de la table
+                vx=0,
+                vy=0,
+                angular_speed=0
+            )
+        elif train_phase == 1:
+            ball = Ball(
+                x=x_table + w_table - 80,  # Bord droit de la table
+                y=y_table - 300,  # Au-dessus de la table
+                vx=0,
+                vy=0,
+                angular_speed=0
+            )
+        else:
+            ball = Ball(
+                x=x_table + w_table - 30,  # Bord droit de la table
+                y=y_table - 300,  # Au-dessus de la table
+                vx=0,
+                vy=0,
+                angular_speed=0
+            )
+
     ball.service = 'right'  # Service depuis la droite
+
     return ball

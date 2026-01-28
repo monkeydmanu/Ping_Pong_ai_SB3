@@ -50,7 +50,7 @@ class PingPongEnv(gym.Env):
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": FPS}
     
-    def __init__(self, render_mode=None, agent_side="left", player1_mouse_control=False, player2_mouse_control=False, static_spawn=False):
+    def __init__(self, render_mode=None, agent_side="left", player1_mouse_control=False, player2_mouse_control=False, static_spawn=False, game_mode=False):
         """
         Initialise l'environnement Ping-Pong.
         
@@ -61,12 +61,16 @@ class PingPongEnv(gym.Env):
                 (dans ce cas, on n'applique que la rotation, pas le mouvement)
             player2_mouse_control (bool): Si True, le joueur 2 est contrôlé à la souris
             static_spawn (bool): Si True, la balle apparaît immobile sans gravité jusqu'au premier contact raquette.
+            game_mode (bool): Si True, ignore le curriculum et place les raquettes à des positions fixes pour le jeu (pas l'entraînement).
         """
         super().__init__()
         
         self.render_mode = render_mode
         self.agent_side = agent_side  # "left" ou "right"
         self.static_spawn = static_spawn
+
+        # Mode jeu (non-entrainement)
+        self.game_mode = game_mode
         
         # === ESPACE D'OBSERVATION (SB3 MultiInputPolicy) ===
         # Format Dict avec embeddings spatiaux pour efficacité
@@ -154,18 +158,18 @@ class PingPongEnv(gym.Env):
         """Met à jour le compteur d'épisodes et ajuste la phase en conséquence."""
         self.episode_count = count
         # Phase automatique basée sur l'épisode
-        if count < 700:
+        if count < 1000:
             self.training_phase = 0
             self.opponent_difficulty = 0.0
-        elif count < 1000:
+        elif count < 2500:
             self.training_phase = 1
             self.opponent_difficulty = 0.0
-        elif count < 1200:
+        elif count < 3500:
             self.training_phase = 2
-            self.opponent_difficulty = 0.3
+            #self.opponent_difficulty = 0.3
         else:
             self.training_phase = 3
-            self.opponent_difficulty = 1.0
+            #self.opponent_difficulty = 1.0
         
     def reset(self, seed=None, options=None):
         """Réinitialise l'environnement pour un nouvel épisode."""
@@ -175,28 +179,36 @@ class PingPongEnv(gym.Env):
         self.table = Table()
         self.net = Net()
         net_center = WIDTH // 2
-        
-        # === Curriculum: Ajuster la distance et vitesse initiale selon la phase ===
-        phase_configs = {
-            0: {'speed_factor': 1.0},   # Balle lente, proche # 0.5     0.6
-            1: {'speed_factor': 1.0},  # Modérée # 0.75    0.8
-            2: {'speed_factor': 1.0},   # Normale
-            3: {'speed_factor': 1.0},   # Normale
-        }
-        config = phase_configs.get(self.training_phase, phase_configs[3])
-        self._speed_factor = config['speed_factor']
-        
-        # Créer les raquettes selon le côté de l'agent
-        if self.agent_side == "left":
-            # Normal: x=50 (loin), Center: x=net_center (600)
-            paddle_x = net_center - 240 - 100 * (self.training_phase)
-            self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
-            self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
+
+        print(self.training_phase, self.episode_count)
+        if self.game_mode:
+            # Mode jeu: positions fixes, pas de curriculum
+            self._speed_factor = 1.0
+            if self.agent_side == "left":
+                self.agent_paddle = Paddle(50, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
+                self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
+            else:
+                self.agent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
+                self.opponent_paddle = Paddle(50, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
         else:
-            # Normal: x=WIDTH-60 (loin), Center: x=net_center (600)
-            paddle_x = net_center + 240 + 100 * (self.training_phase)
-            self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
-            self.opponent_paddle = Paddle(50, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
+            # === Curriculum: Ajuster la distance et vitesse initiale selon la phase ===
+            phase_configs = {
+                0: {'speed_factor': 1.0},   # Balle lente, proche # 0.5     0.6
+                1: {'speed_factor': 1.0},  # Modérée # 0.75    0.8
+                2: {'speed_factor': 1.0},   # Normale
+                3: {'speed_factor': 1.0},   # Normale
+            }
+            config = phase_configs.get(self.training_phase, phase_configs[3])
+            self._speed_factor = config['speed_factor']
+            # Créer les raquettes selon le côté de l'agent
+            if self.agent_side == "left":
+                paddle_x = net_center - 240 - 150 * (self.training_phase)
+                self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
+                self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
+            else:
+                paddle_x = net_center + 240 + 150 * (self.training_phase)
+                self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
+                self.opponent_paddle = Paddle(50, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
         
         # Randomiser le service
         self.is_agent_service = True
@@ -204,15 +216,15 @@ class PingPongEnv(gym.Env):
         if self.is_agent_service:
             # L'agent sert
             if self.agent_side == "left":
-                self.ball = spawn_ball_left(self.table)
+                self.ball = spawn_ball_left(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
             else:
-                self.ball = spawn_ball_right(self.table)
+                self.ball = spawn_ball_right(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
         else:
             # L'adversaire sert
             if self.agent_side == "left":
-                self.ball = spawn_ball_right(self.table)
+                self.ball = spawn_ball_right(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
             else:
-                self.ball = spawn_ball_left(self.table)
+                self.ball = spawn_ball_left(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
 
         # Mode spawn statique: pas de gravité tant qu'aucun hit
         if self.static_spawn:
@@ -222,7 +234,7 @@ class PingPongEnv(gym.Env):
 
         # Faciliter la Phase 0 : considérer que le serveur a déjà un rebond
         # Cela évite la faute de volée et permet de frapper immédiatement.
-        if self.training_phase == 0:
+        if self.training_phase == 0 and not self.game_mode:
             if self.agent_side == "left":
                 self.ball.bounces_left = 1
             else:
@@ -429,6 +441,13 @@ class PingPongEnv(gym.Env):
                     self.agent_paddle.can_hit = True
                     self.opponent_paddle.can_hit = True
 
+                    # Fin du service : si la balle passe de l'autre côté, on désactive le flag service
+                    if self.ball.service is not None:
+                        # Si la balle vient de quitter le côté du serveur
+                        if (self.ball.service == 'left' and self.ball_side == 'left' and current_side == 'right') or \
+                           (self.ball.service == 'right' and self.ball_side == 'right' and current_side == 'left'):
+                            self.ball.service = None
+
                     if self.is_agent_service:
                         server_side = self.ball.service
                         if server_side == 'left' and current_side == 'right':
@@ -437,13 +456,12 @@ class PingPongEnv(gym.Env):
                         elif server_side == 'right' and current_side == 'left':
                             if self.ball.bounces_right != 1:
                                 self.service_fault = True
-                
-                        
+
                     if self.ball_side == 'left':
                         self.ball.bounces_left = 0
                     else:
                         self.ball.bounces_right = 0
-                
+
                 self.ball_side = current_side
                 
                 # === COLLISIONS AVEC RAQUETTES ===
@@ -917,7 +935,7 @@ class PingPongEnv(gym.Env):
             continuous[9] = 1.0 if self.ball.service is not None else -1.0
             
             # Distances relatives balle→raquette normalisées dans [-1, 1]
-            # dx = (ball_x - paddle_center_x) / (WIDTH/2), dy = (ball_y - paddle_center_y) / (HEIGHT/2)
+            # dx = (ball_x - paddle_center_x) / (WIDTH/2), dy = (ball_y - paddle_center_y) / (HEIesGHT/2)
             continuous[10] = np.clip(((ball_x - paddle_center_x) / (WIDTH / 2.0)), -1.0, 1.0)
             continuous[11] = np.clip(((ball_y - paddle_center_y) / (HEIGHT / 2.0)), -1.0, 1.0)
         else:
