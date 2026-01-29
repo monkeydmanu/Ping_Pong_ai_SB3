@@ -205,7 +205,7 @@ def play_ai_vs_human(model_path: str = DEFAULT_MODEL_PATH, mouse: bool = False, 
         # Humain à gauche (joueur 1)
         print("Vous êtes le joueur 1 (gauche): SOURIS (clics pour rotation)") if mouse else print("Vous êtes le joueur 1 (gauche): Z/S=vertical, Q/D=horizontal, A/E=rotation")
         print("L'IA est le joueur 2 (droite)")
-        game = Game(player1_type="human", player2_type="ai", mouse_control_p1=mouse, agent_side="left")
+        game = Game(player1_type="human", player2_type="ai", mouse_control_p1=mouse, agent_side="right")
 
     obs, _ = game.env.reset()
 

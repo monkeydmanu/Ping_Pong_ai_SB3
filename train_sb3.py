@@ -147,19 +147,19 @@ def main():
                         help='Vérifier que l\'environnement est compatible SB3')
     parser.add_argument('--embed-dim', type=int, default=16,
                         help='Dimension des embeddings spatiaux')
-    parser.add_argument('--learning-rate', type=float, default=3e-4,
+    parser.add_argument('--learning-rate', type=float, default=1e-4,
                         help='Learning rate pour PPO')
     parser.add_argument('--n-steps', type=int, default=2048,
                         help='Nombre de steps avant chaque update')
-    parser.add_argument('--batch-size', type=int, default=64,
+    parser.add_argument('--batch-size', type=int, default=128,
                         help='Taille des mini-batches')
     parser.add_argument('--n-epochs', type=int, default=10,
                         help='Nombre d\'epochs par update')
-    parser.add_argument('--gamma', type=float, default=0.99,
+    parser.add_argument('--gamma', type=float, default=0.995,
                         help='Discount factor')
-    parser.add_argument('--gae-lambda', type=float, default=0.95,
+    parser.add_argument('--gae-lambda', type=float, default=0.98,
                         help='GAE lambda')
-    parser.add_argument('--ent-coef', type=float, default=0.01,
+    parser.add_argument('--ent-coef', type=float, default=0.005,
                         help='Coefficient d\'entropie (exploration)')
     parser.add_argument('--log-name', type=str, default=None,
                         help='Nom de la run TensorBoard (ignoré si on charge un modèle)')
@@ -356,18 +356,18 @@ def main():
         save_vecnormalize=False,
     )
     
-    # Environnement d'évaluation (sans render)
-    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False, game_mode=False), 
+    # Environnement d'évaluation (sans render) - Toujours en phase finale (game_mode=True)
+    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False, game_mode=True), 
                        eval_log_path)
     
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=best_model_path,
         log_path=eval_log_path,
-        eval_freq=5000,
+        eval_freq=10000,
         deterministic=True,
         render=False,
-        n_eval_episodes=20,
+        n_eval_episodes=30,
     )
     
     callbacks = [curriculum_callback, checkpoint_callback, eval_callback]

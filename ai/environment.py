@@ -157,19 +157,22 @@ class PingPongEnv(gym.Env):
     def set_episode_count(self, count):
         """Met à jour le compteur d'épisodes et ajuste la phase en conséquence."""
         self.episode_count = count
-        # Phase automatique basée sur l'épisode
-        if count < 1000:
-            self.training_phase = 0
+        # Phase automatique basée sur l'épisode (curriculum rallongé)
+        if count < 2000:
+            self.training_phase = 0  # Phase d'apprentissage de base (2000 épisodes)
             self.opponent_difficulty = 0.0
-        elif count < 2500:
-            self.training_phase = 1
+        elif count < 4000:
+            self.training_phase = 1  # Phase intermédiaire (2000 épisodes)
             self.opponent_difficulty = 0.0
-        elif count < 3500:
-            self.training_phase = 2
-            #self.opponent_difficulty = 0.3
+        elif count < 7000:
+            self.training_phase = 2  # Phase avancée (3000 épisodes)
+            self.opponent_difficulty = 0.0
+        elif count < 10000:
+            self.training_phase = 3  # Phase expert (3000 épisodes)
+            self.opponent_difficulty = 0.0
         else:
-            self.training_phase = 3
-            #self.opponent_difficulty = 1.0
+            self.training_phase = 4  # Phase maître (infini)
+            self.opponent_difficulty = 0.0
         
     def reset(self, seed=None, options=None):
         """Réinitialise l'environnement pour un nouvel épisode."""
@@ -193,20 +196,23 @@ class PingPongEnv(gym.Env):
         else:
             # === Curriculum: Ajuster la distance et vitesse initiale selon la phase ===
             phase_configs = {
-                0: {'speed_factor': 1.0},   # Balle lente, proche # 0.5     0.6
-                1: {'speed_factor': 1.0},  # Modérée # 0.75    0.8
-                2: {'speed_factor': 1.0},   # Normale
-                3: {'speed_factor': 1.0},   # Normale
+                0: {'speed_factor': 0.6},   # Balle très lente pour apprendre les bases
+                1: {'speed_factor': 0.75},  # Balle modérée
+                2: {'speed_factor': 0.9},   # Balle presque normale
+                3: {'speed_factor': 1.0},   # Vitesse normale
+                4: {'speed_factor': 1.0},   # Vitesse normale (phase maître)
             }
-            config = phase_configs.get(self.training_phase, phase_configs[3])
+            config = phase_configs.get(self.training_phase, phase_configs[4])
             self._speed_factor = config['speed_factor']
             # Créer les raquettes selon le côté de l'agent
+            # Distance progressive: Phase 0=proche, Phase 4=loin
+            distance_offset = min(self.training_phase, 4) * 120  # Max 480px de distance
             if self.agent_side == "left":
-                paddle_x = net_center - 240 - 150 * (self.training_phase)
+                paddle_x = net_center - 240 - distance_offset
                 self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
                 self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
             else:
-                paddle_x = net_center + 240 + 150 * (self.training_phase)
+                paddle_x = net_center + 240 + distance_offset
                 self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
                 self.opponent_paddle = Paddle(50, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
         
@@ -260,6 +266,7 @@ class PingPongEnv(gym.Env):
         observation = self._get_observation()
         info = {}
         
+
         return observation, info
     
     def step(self, action, opponent_action=None):
@@ -437,30 +444,22 @@ class PingPongEnv(gym.Env):
                 
                 # Si la balle change de côté
                 if self.ball_side is not None and current_side != self.ball_side:
-                    # Reset les compteurs de rebonds et can_hit
-                    self.agent_paddle.can_hit = True
-                    self.opponent_paddle.can_hit = True
 
+                    
+                    server_side = self.ball.service
+                    if server_side == 'left' and current_side == 'right':
+                        if self.ball.bounces_left != 1:
+                            self.service_fault = True
+                    elif server_side == 'right' and current_side == 'left':
+                        if self.ball.bounces_right != 1:
+                            self.service_fault = True
+                    
                     # Fin du service : si la balle passe de l'autre côté, on désactive le flag service
                     if self.ball.service is not None:
                         # Si la balle vient de quitter le côté du serveur
                         if (self.ball.service == 'left' and self.ball_side == 'left' and current_side == 'right') or \
                            (self.ball.service == 'right' and self.ball_side == 'right' and current_side == 'left'):
                             self.ball.service = None
-
-                    if self.is_agent_service:
-                        server_side = self.ball.service
-                        if server_side == 'left' and current_side == 'right':
-                            if self.ball.bounces_left != 1:
-                                self.service_fault = True
-                        elif server_side == 'right' and current_side == 'left':
-                            if self.ball.bounces_right != 1:
-                                self.service_fault = True
-
-                    if self.ball_side == 'left':
-                        self.ball.bounces_left = 0
-                    else:
-                        self.ball.bounces_right = 0
 
                 self.ball_side = current_side
                 
@@ -483,6 +482,14 @@ class PingPongEnv(gym.Env):
                         self.pending_hit_reward = True
                         self.agent_hits += 1
                         self.ball.last_hit_by = agent_paddle_side
+                        
+                        # Reset can_hit de l'adversaire et les rebonds de l'autre côté
+                        self.opponent_paddle.can_hit = True
+                        opponent_side = 'right' if agent_paddle_side == 'left' else 'left'
+                        if opponent_side == 'left':
+                            self.ball.bounces_left = 0
+                        else:
+                            self.ball.bounces_right = 0
                 
                 # Collision avec raquette adversaire
                 if self.opponent_paddle.can_hit:
@@ -498,6 +505,14 @@ class PingPongEnv(gym.Env):
                         self.ball.gravity_enabled = True
                         
                         self.ball.last_hit_by = opponent_paddle_side
+                        
+                        # Reset can_hit de l'agent et les rebonds de l'autre côté
+                        self.agent_paddle.can_hit = True
+                        agent_paddle_side = 'left' if self.agent_side == 'left' else 'right'
+                        if agent_paddle_side == 'left':
+                            self.ball.bounces_left = 0
+                        else:
+                            self.ball.bounces_right = 0
         
         # === DÉTECTION DES FAUTES POUR LES DEUX CÔTÉS ===
         terminated = False
@@ -723,23 +738,19 @@ class PingPongEnv(gym.Env):
             # A. Guidage vers la balle (seulement si la balle vient vers nous)
             # Inutile de courir après si elle est chez l'adversaire
             if ball_on_agent_side:
-                # Pénalité de distance (pression constante pour rester proche)
-                reward -= (dist_to_ball * 0.0001) / REWARD_SCALE
-                
-                # Bonus d'approche (Delta)
+                # Bonus d'approche (Delta seulement, pas de pénalité de distance absolue)
                 if self.prev_dist_to_ball is not None:
                     improvement = self.prev_dist_to_ball - dist_to_ball
-                    # On récompense si on se rapproche, on ne pénalise pas trop si on s'éloigne (parfois nécessaire pour se repositionner)
+                    # On récompense uniquement si on se rapproche
                     if improvement > 0:
-                        reward += (improvement * 0.005) / REWARD_SCALE
+                        reward += (improvement * 0.003) / REWARD_SCALE  # Réduit de 0.005 -> 0.003
                 self.prev_dist_to_ball = dist_to_ball
 
-            # B. Bonus d'Alignement (Vitesse directionnelle)
-            # Ton code était bon, mais on réduit l'impact pour ne pas perturber le Delta
+            # B. Bonus d'Alignement (Vitesse directionnelle) - RÉDUIT
             paddle_vel_x, paddle_vel_y = self.agent_paddle.vel
             paddle_speed = np.sqrt(paddle_vel_x**2 + paddle_vel_y**2)
             
-            if paddle_speed > 5 and ball_on_agent_side:
+            if paddle_speed > 10 and ball_on_agent_side:  # Seuil augmenté de 5 -> 10
                 dir_to_ball_x = (ball_x - paddle_center_x) / (dist_to_ball + 1e-6)
                 dir_to_ball_y = (ball_y - paddle_center_y) / (dist_to_ball + 1e-6)
                 
@@ -748,8 +759,8 @@ class PingPongEnv(gym.Env):
                 
                 alignment = vel_norm_x * dir_to_ball_x + vel_norm_y * dir_to_ball_y
                 
-                if alignment > 0.5: # Seulement si franchement aligné
-                    reward += (0.02 * alignment) / REWARD_SCALE
+                if alignment > 0.7:  # Seuil augmenté de 0.5 -> 0.7 (plus strict)
+                    reward += (0.01 * alignment) / REWARD_SCALE  # Réduit de 0.02 -> 0.01
 
             # === 3. ÉVÉNEMENTS CLÉS (Jalons) ===
             # Ces récompenses doivent être significatives mais inférieures à la Victoire
