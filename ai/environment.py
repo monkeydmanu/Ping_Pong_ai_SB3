@@ -27,20 +27,25 @@ class PingPongEnv(gym.Env):
     """
     Environnement Ping-Pong pour reinforcement learning.
     
-    Observation (18 valeurs normalisées [-1, 1]):
-        [0-1]   Position balle (x, y)
-        [2-3]   Vitesse balle (vx, vy)
-        [4]     Spin balle
-        [5-6]   Position raquette agent (x, y)
-        [7-8]   Vitesse raquette agent (vx, vy)
-        [9]     Angle raquette agent
-        [10-11] Position adversaire (x, y)
-        [12]    Balle de notre côté ? (1=oui, -1=non)
-        [13]    Balle vient vers nous ? (1=oui, -1=non)
-        [14]    Rebonds sur notre côté (0, 0.5, 1)
-        [15]    Rebonds côté adverse (0, 0.5, 1)
-        [16]    Distance balle-raquette normalisée
-        [17]    Est-ce un service ? (1=oui, -1=non)
+    Observation (Format Dict - MultiInputPolicy):
+        Embeddings (index discrets):
+            - ball_idx: Position balle en grille 16x16 [0-255]
+            - paddle_idx: Position raquette agent en grille 16x16 [0-255]
+            - angle_idx: Angle raquette en 16 bins [0-15]
+        
+        Continuous (18 valeurs normalisées [-1, 1]):
+            [0-1]   Vitesse balle (vx, vy)
+            [2]     Spin balle
+            [3-4]   Vitesse raquette agent (vx, vy)
+            [5]     Balle de notre côté ? (1=oui, -1=non)
+            [6]     Balle vient vers nous ? (1=oui, -1=non)
+            [7]     Rebonds sur notre côté (0, 0.5, 1)
+            [8]     Rebonds côté adverse (0, 0.5, 1)
+            [9]     Est-ce un service ? (1=oui, -1=non)
+            [10-11] Distance balle→raquette (dx, dy)
+            [12-13] Position raquette agent (x, y)
+            [14-15] Vitesse relative balle-raquette (pour timing)
+            [16-17] sin(angle) et cos(angle) (continuité circulaire)
     
     Actions (3 valeurs continues [-1, 1]):
         - move_x : mouvement horizontal
@@ -93,7 +98,10 @@ class PingPongEnv(gym.Env):
             # [9] Service ? (1/-1)
             # [10-11] Distance balle→raquette (dx, dy)
             # [12-13] Position raquette agent (x, y)
-            "continuous": spaces.Box(low=-1.0, high=1.0, shape=(14,), dtype=np.float32)
+            # [14-15] Vitesse relative balle-raquette (vx_rel, vy_rel) - NOUVEAU pour timing
+            # [16-17] sin(angle) et cos(angle) - NOUVEAU pour continuité circulaire
+            # [18] Ai-je le droit de frapper ? (1=oui après rebond, -1=non avant rebond) - CRITIQUE
+            "continuous": spaces.Box(low=-1.0, high=1.0, shape=(19,), dtype=np.float32)
         })
         
         # === ESPACE D'ACTION (Continu) ===
@@ -135,6 +143,7 @@ class PingPongEnv(gym.Env):
         # Flags pour les récompenses (éviter les doublons)
         self.bounce_reward_given = False
         self.fault_volley = False
+        self.opponent_fault_volley = False
         self.double_hit_fault = False
         self.service_fault = False
         self.pending_hit_reward = False
@@ -196,25 +205,26 @@ class PingPongEnv(gym.Env):
         else:
             # === Curriculum: Ajuster la distance et vitesse initiale selon la phase ===
             phase_configs = {
-                0: {'speed_factor': 0.6},   # Balle très lente pour apprendre les bases
-                1: {'speed_factor': 0.75},  # Balle modérée
-                2: {'speed_factor': 0.9},   # Balle presque normale
-                3: {'speed_factor': 1.0},   # Vitesse normale
+                0: {'speed_factor': 0.4},   # Balle ULTRA lente pour vraiment apprendre les bases
+                1: {'speed_factor': 0.6},   # Balle lente
+                2: {'speed_factor': 0.8},   # Balle modérée
+                3: {'speed_factor': 0.95},  # Balle presque normale
                 4: {'speed_factor': 1.0},   # Vitesse normale (phase maître)
             }
             config = phase_configs.get(self.training_phase, phase_configs[4])
             self._speed_factor = config['speed_factor']
             # Créer les raquettes selon le côté de l'agent
-            # Distance progressive: Phase 0=proche, Phase 4=loin
-            distance_offset = min(self.training_phase, 4) * 120  # Max 480px de distance
+            # Distance progressive: Phase 0=très loin (forcer apprentissage), Phase 4=normal
+            # Augmenté pour forcer l'IA à apprendre l'approche APRÈS le rebond, pas avant
+            distance_offset = min(self.training_phase, 4) * 150  # Max 600px de distance (augmenté de 120 -> 150)
             if self.agent_side == "left":
-                paddle_x = net_center - 240 - distance_offset
+                paddle_x = net_center - 300 - distance_offset  # Augmenté de 240 -> 300
                 self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
-                self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
+                self.opponent_paddle = Paddle(TABLE_Y + TABLE_WIDTH_PX//2 + OUT_MARGIN + RACKET_HEIGHT_PX//2, 10, x_min=net_center, x_max=WIDTH)
             else:
-                paddle_x = net_center + 240 + distance_offset
+                paddle_x = net_center + 300 + distance_offset  # Augmenté de 240 -> 300
                 self.agent_paddle = Paddle(paddle_x, HEIGHT // 2 - 30, x_min=net_center, x_max=WIDTH)
-                self.opponent_paddle = Paddle(50, HEIGHT // 2 - 30, x_min=0, x_max=net_center)
+                self.opponent_paddle = Paddle(50, 10, x_min=0, x_max=net_center)
         
         # Randomiser le service
         self.is_agent_service = True
@@ -238,13 +248,8 @@ class PingPongEnv(gym.Env):
             self.ball.vel[:] = 0
             self.ball.angular_speed = 0
 
-        # Faciliter la Phase 0 : considérer que le serveur a déjà un rebond
-        # Cela évite la faute de volée et permet de frapper immédiatement.
-        if self.training_phase == 0 and not self.game_mode:
-            if self.agent_side == "left":
-                self.ball.bounces_left = 1
-            else:
-                self.ball.bounces_right = 1
+        # Respect strict des règles : pas de rebond forcé en phase 0
+        # Le serveur doit attendre le rebond avant de frapper (même au service)
         
         self.ball_in_play = True
         self.steps = 0
@@ -257,6 +262,7 @@ class PingPongEnv(gym.Env):
         # Reset des flags de récompenses
         self.bounce_reward_given = False # flag temporaire qui s'active et se désactive la balle touche la table adverse, pour donner une récompense une seule fois
         self.fault_volley = False # touche la balle en volée
+        self.opponent_fault_volley = False # l'adversaire touche la balle en volée
         self.double_hit_fault = False
         self.service_fault = False
         self.pending_hit_reward = False
@@ -329,13 +335,15 @@ class PingPongEnv(gym.Env):
                     
                     # Vérifier s'il y a eu un rebond sur le côté adverse
                     has_valid_bounce = False
-                    if self.ball.bounces_right > 0:
+                    if self.ball.bounces_right > 0 and hitter == 'left':
                         has_valid_bounce = True
-                    elif self.ball.bounces_left > 0:
+                    elif self.ball.bounces_left > 0 and hitter == 'right':
                         has_valid_bounce = True
                     
                     # === CAS 1 : PAS DE REBOND ADVERSE (détection précoce avec marges) ===
-                    if not has_valid_bounce and hitter is not None:
+                    # vérifier si la balle est de l'autre côté que du frappeur et qu'il n'y a pas de rebond
+                    if self.ball_side is not None and hitter is not None and self.ball_side != hitter and not has_valid_bounce:
+                    
                         table_left_limit = self.table.x - OUT_MARGIN
                         table_right_limit = self.table.x + self.table.width + OUT_MARGIN
                         
@@ -476,6 +484,12 @@ class PingPongEnv(gym.Env):
                         if hasattr(self.ball, 'last_hit_by'):
                             self.ball.previous_hit_by = self.ball.last_hit_by
                         
+                        # DÉTECTION VOLLEY : Frapper sans rebond sur notre côté (même au service)
+                        our_bounces = self.ball.bounces_left if agent_paddle_side == 'left' else self.ball.bounces_right
+                        if our_bounces == 0:
+                            # FAUTE : frapper sans rebond sur notre table
+                            self.fault_volley = True
+                        
                         # Réactiver la gravité au premier contact si spawn statique
                         self.ball.gravity_enabled = True
                         
@@ -500,6 +514,11 @@ class PingPongEnv(gym.Env):
                         # Sauvegarder qui a frappé avant
                         if hasattr(self.ball, 'last_hit_by'):
                             self.ball.previous_hit_by = self.ball.last_hit_by
+
+                        # DÉTECTION VOLLEY ADVERSAIRE : frapper sans rebond sur son côté (même au service)
+                        opponent_bounces = self.ball.bounces_right if opponent_paddle_side == 'right' else self.ball.bounces_left
+                        if opponent_bounces == 0:
+                            self.opponent_fault_volley = True
                         
                         # Réactiver la gravité au premier contact si spawn statique
                         self.ball.gravity_enabled = True
@@ -528,28 +547,20 @@ class PingPongEnv(gym.Env):
             'timeout': False,
         }
         
-        # Volley (obstruction) - vérifier pour les deux côtés
-        if self.ball.last_hit_by in ('left', 'right'):
-            # Vérifier si le joueur gauche a fait une volée
-            if self.ball.last_hit_by == 'left' and self.ball.bounces_left == 0 and self.ball_side == 'left':
-                # Vérifier que la balle avait été frappée par l'adversaire avant
-                prev_hit = getattr(self.ball, 'previous_hit_by', None)
-                if prev_hit == 'right':
-                    faults['volley_left'] = True
-                    self.point_winner_side = 'right'
-                    terminated = True
-                    self.ball_in_play = False
-                    self._update_scores("Obstruction gauche!")
-            
-            # Vérifier si le joueur droit a fait une volée
-            if self.ball.last_hit_by == 'right' and self.ball.bounces_right == 0 and self.ball_side == 'right':
-                prev_hit = getattr(self.ball, 'previous_hit_by', None)
-                if prev_hit == 'left':
-                    faults['volley_right'] = True
-                    self.point_winner_side = 'left'
-                    terminated = True
-                    self.ball_in_play = False
-                    self._update_scores("Obstruction droite!")
+        # Volley (obstruction) - frapper sans rebond sur notre table
+        if self.fault_volley or self.opponent_fault_volley:
+            agent_is_left = (self.agent_side == "left")
+            if self.fault_volley:
+                # L'agent a frappé sans rebond -> il perd
+                faults['volley_left' if agent_is_left else 'volley_right'] = True
+                self.point_winner_side = 'right' if agent_is_left else 'left'
+            else:
+                # L'adversaire a frappé sans rebond -> il perd
+                faults['volley_right' if agent_is_left else 'volley_left'] = True
+                self.point_winner_side = 'left' if agent_is_left else 'right'
+            terminated = True
+            self.ball_in_play = False
+            self._update_scores("Volley/Obstruction - pas de rebond avant frappe!")
         
         # Double rebond - vérifier pour les deux côtés
         if not terminated and self.ball.bounces_left >= 2:
@@ -584,16 +595,6 @@ class PingPongEnv(gym.Env):
             terminated = True
             self.ball_in_play = False
             self._update_scores("Service invalide!")
-        
-        # Limite de steps pour éviter les boucles infinies (timeout => truncated)
-        if not terminated and self.steps >= MAX_STEPS_PER_EPISODE:
-            faults['timeout'] = True
-            truncated = True
-            # Considérer comme une perte pour l'agent pour cohérence des scores
-            agent_is_left = (self.agent_side == "left")
-            self.point_winner_side = 'right' if agent_is_left else 'left'
-            self.ball_in_play = False
-            self._update_scores(f"Timeout après {MAX_STEPS_PER_EPISODE} steps!")
         
         observation = self._get_observation()
         info = {
@@ -677,7 +678,8 @@ class PingPongEnv(gym.Env):
         
         move_x = 0.0
         
-        return np.array([move_x, move_y, 0.0], dtype=np.float32) # adversaire qui joue pas
+        #return np.array([move_x, move_y, 0.0], dtype=np.float32) # adversaire qui joue pas
+        return np.array([0.0, 0.0, 0.0], dtype=np.float32)
     
     def _check_paddle_collision(self, paddle, who):
         """Vérifie la collision balle-raquette et met à jour last_hit_by."""
@@ -715,10 +717,10 @@ class PingPongEnv(gym.Env):
                 reward = 10.0 / REWARD_SCALE  # = 1.0
                 log_msg = "🟢 WIN"
             else:
-                # La défaite doit faire mal pour motiver la défense
-                reward = -5.0 / REWARD_SCALE  # = -0.33
+                # La défaite doit faire mal pour motiver la défense (symétrique avec victoire)
+                reward = -10.0 / REWARD_SCALE  # = -1.0 (équilibré avec victoire)
                 if faults.get('double_bounce_left', False):
-                    reward -= 1.0 / REWARD_SCALE  # -0.067 extra
+                    reward -= 1.0 / REWARD_SCALE  # -0.1 extra
                 log_msg = "🔴 LOSS"
             
             if self.render_mode == "human":
@@ -735,22 +737,33 @@ class PingPongEnv(gym.Env):
             dist_to_ball = np.sqrt((ball_x - paddle_center_x)**2 + (ball_y - paddle_center_y)**2)
             ball_on_agent_side = info.get('ball_on_agent_side', False)
 
-            # A. Guidage vers la balle (seulement si la balle vient vers nous)
-            # Inutile de courir après si elle est chez l'adversaire
-            if ball_on_agent_side:
+            # Rebond côté agent (condition pour autoriser l'approche)
+            our_bounces = self.ball.bounces_left if agent_is_left else self.ball.bounces_right
+
+            # A. AVANT REBOND : Rester neutre (pas de guidage, pas de pénalité)
+            # L'agent doit se positionner librement sans contrainte
+            if ball_on_agent_side and our_bounces == 0:
+                # Reset du tracking : on ne guide pas, mais on ne pénalise pas non plus
+                self.prev_dist_to_ball = None
+            
+            # B. APRÈS REBOND : Guidage actif vers la balle
+            elif ball_on_agent_side and our_bounces > 0:
                 # Bonus d'approche (Delta seulement, pas de pénalité de distance absolue)
                 if self.prev_dist_to_ball is not None:
                     improvement = self.prev_dist_to_ball - dist_to_ball
                     # On récompense uniquement si on se rapproche
                     if improvement > 0:
-                        reward += (improvement * 0.003) / REWARD_SCALE  # Réduit de 0.005 -> 0.003
+                        reward += (improvement * 0.005) / REWARD_SCALE  # Augmenté de 0.003 -> 0.005
                 self.prev_dist_to_ball = dist_to_ball
+            else:
+                # Tant que la balle n'a pas rebondi chez nous, on ne guide pas l'approche
+                self.prev_dist_to_ball = None
 
-            # B. Bonus d'Alignement (Vitesse directionnelle) - RÉDUIT
+            # B. Bonus d'Alignement (Vitesse directionnelle) - APRÈS rebond
             paddle_vel_x, paddle_vel_y = self.agent_paddle.vel
             paddle_speed = np.sqrt(paddle_vel_x**2 + paddle_vel_y**2)
             
-            if paddle_speed > 10 and ball_on_agent_side:  # Seuil augmenté de 5 -> 10
+            if paddle_speed > 10 and ball_on_agent_side and our_bounces > 0:  # Seuil augmenté de 5 -> 10
                 dir_to_ball_x = (ball_x - paddle_center_x) / (dist_to_ball + 1e-6)
                 dir_to_ball_y = (ball_y - paddle_center_y) / (dist_to_ball + 1e-6)
                 
@@ -759,16 +772,21 @@ class PingPongEnv(gym.Env):
                 
                 alignment = vel_norm_x * dir_to_ball_x + vel_norm_y * dir_to_ball_y
                 
-                if alignment > 0.7:  # Seuil augmenté de 0.5 -> 0.7 (plus strict)
+                if alignment > 0.5:  # Seuil modéré pour permettre l'apprentissage précoce
                     reward += (0.01 * alignment) / REWARD_SCALE  # Réduit de 0.02 -> 0.01
 
             # === 3. ÉVÉNEMENTS CLÉS (Jalons) ===
             # Ces récompenses doivent être significatives mais inférieures à la Victoire
             
-            # Toucher la balle : C'est bien, mais c'est le minimum syndical
+            # BONUS REBOND : Frapper APRÈS exactement 1 rebond (comportement correct)
             if self.pending_hit_reward:
-                reward += 2.0 / REWARD_SCALE  # = 0.2
-                self.pending_hit_reward = False
+                our_bounces_at_hit = self.ball.bounces_left if agent_is_left else self.ball.bounces_right
+                
+                if our_bounces_at_hit == 1:
+                    # EXCELLENT : frappe après 1 rebond
+                    reward += 5.0 / REWARD_SCALE  # = 0.5 (signal FORT)
+            
+
             
             # Mettre la balle chez l'adversaire (rebond valide) : C'est très bien
             ball_bounces_opponent = info.get('ball_bounces_opponent', 0)
@@ -778,7 +796,7 @@ class PingPongEnv(gym.Env):
                 if not self.bounce_reward_given:
                     reward += 8.0 / REWARD_SCALE  # = 0.4 (envoie un signal fort)
                     self.bounce_reward_given = True
-        
+        #print(f"Reward step: {reward:.3f}")
         return reward
     """
         # === RÉCOMPENSES INTERMÉDIAIRES (point en cours) ===
@@ -889,7 +907,7 @@ class PingPongEnv(gym.Env):
             - 'ball_idx': index de cellule grille pour position balle (int 0-255, grille 16×16)
             - 'paddle_idx': index de cellule grille pour position raquette agent (int 0-255)
             - 'angle_idx': index d'angle discret pour raquette agent (int 0-15, cyclique)
-            - 'continuous': array de features continues [14 valeurs]:
+            - 'continuous': array de features continues [18 valeurs]:
                 [0-1]   Vitesse balle (vx, vy) normalisée
                 [2]     Spin balle normalisé
                 [3-4]   Vitesse raquette agent (vx, vy) normalisée
@@ -900,9 +918,12 @@ class PingPongEnv(gym.Env):
                 [9]     Est-ce un service ? (1 = oui, -1 = non)
                 [10-11] Distances normalisées balle→raquette (dx, dy) dans [-1, 1]
                 [12-13] Position raquette agent continue (x, y) normalisée
+                [14-15] Vitesse relative balle-raquette (vx_rel, vy_rel) pour timing
+                [16-17] sin(angle) et cos(angle) pour continuité circulaire
+                [18] Ai-je le droit de frapper ? (1=oui, -1=non)
         """
         agent_is_left = (self.agent_side == "left")
-        continuous = np.zeros(14, dtype=np.float32)
+        continuous = np.zeros(19, dtype=np.float32)
         
         # Centre de la raquette agent (utilisé pour distances relatives)
         paddle_center_x = self.agent_paddle.pos[0] + self.agent_paddle.width / 2
@@ -931,7 +952,7 @@ class PingPongEnv(gym.Env):
             continuous[5] = 1.0 if ball_on_agent_side else -1.0
             
             # Balle vient vers nous ?
-            ball_coming = (self.ball.vel[0] < 0) if agent_is_left else (self.ball.vel[0] > 0)
+            ball_coming = (self.ball.vel[0] <= 0) if agent_is_left else (self.ball.vel[0] >= 0)
             continuous[6] = 1.0 if ball_coming else -1.0
             
             # Rebonds sur notre côté
@@ -946,7 +967,7 @@ class PingPongEnv(gym.Env):
             continuous[9] = 1.0 if self.ball.service is not None else -1.0
             
             # Distances relatives balle→raquette normalisées dans [-1, 1]
-            # dx = (ball_x - paddle_center_x) / (WIDTH/2), dy = (ball_y - paddle_center_y) / (HEIesGHT/2)
+            # dx = (ball_x - paddle_center_x) / (WIDTH/2), dy = (ball_y - paddle_center_y) / (HEIGHT/2)
             continuous[10] = np.clip(((ball_x - paddle_center_x) / (WIDTH / 2.0)), -1.0, 1.0)
             continuous[11] = np.clip(((ball_y - paddle_center_y) / (HEIGHT / 2.0)), -1.0, 1.0)
         else:
@@ -968,6 +989,29 @@ class PingPongEnv(gym.Env):
         # Position Raquette Continue [-1, 1]
         continuous[12] = (paddle_center_x / WIDTH) * 2 - 1
         continuous[13] = (paddle_center_y / HEIGHT) * 2 - 1
+        
+        # NOUVEAU : Vitesse relative balle-raquette (pour timing d'impact)
+        if self.ball_in_play and self.ball is not None:
+            max_vel = 1000.0
+            vel_rel_x = self.ball.vel[0] - self.agent_paddle.vel[0]
+            vel_rel_y = self.ball.vel[1] - self.agent_paddle.vel[1]
+            continuous[14] = np.clip(vel_rel_x / max_vel, -1, 1)
+            continuous[15] = np.clip(vel_rel_y / max_vel, -1, 1)
+        else:
+            continuous[14] = 0.0
+            continuous[15] = 0.0
+        
+        # NOUVEAU : sin/cos de l'angle pour continuité circulaire (359° proche de 1°)
+        angle_rad = np.deg2rad(self.agent_paddle.angle)
+        continuous[16] = np.sin(angle_rad)
+        continuous[17] = np.cos(angle_rad)
+        
+        # NOUVEAU CRITIQUE : Ai-je le droit de frapper ? (rebond détecté)
+        if self.ball_in_play and self.ball is not None:
+            our_bounces = self.ball.bounces_left if agent_is_left else self.ball.bounces_right
+            continuous[18] = 1.0 if our_bounces > 0 else -1.0
+        else:
+            continuous[18] = -1.0  # Pas de balle = pas le droit de frapper
 
         # Angle raquette en index discret cyclique [0-15]
         # Angle [-180, 180] -> 16 bins (22.5 degrés par bin)

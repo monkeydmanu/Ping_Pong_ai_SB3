@@ -157,9 +157,9 @@ def main():
                         help='Nombre d\'epochs par update')
     parser.add_argument('--gamma', type=float, default=0.995,
                         help='Discount factor')
-    parser.add_argument('--gae-lambda', type=float, default=0.98,
+    parser.add_argument('--gae-lambda', type=float, default=0.95,
                         help='GAE lambda')
-    parser.add_argument('--ent-coef', type=float, default=0.005,
+    parser.add_argument('--ent-coef', type=float, default=0.002,
                         help='Coefficient d\'entropie (exploration)')
     parser.add_argument('--log-name', type=str, default=None,
                         help='Nom de la run TensorBoard (ignoré si on charge un modèle)')

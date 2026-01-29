@@ -23,9 +23,9 @@ class HybridFeatureExtractor(BaseFeaturesExtractor):
     1. Embeddings spatiaux 16x16 pour la position de la balle (256 cellules → embed_dim)
     2. Embeddings spatiaux 16x16 pour la position de la raquette (256 cellules → embed_dim)
     3. Embeddings pour l'angle de la raquette (16 bins → embed_dim)
-    4. Features continues (14 valeurs) directement concaténées
+    4. Features continues (19 valeurs) directement concaténées
     
-    Sortie: Un vecteur de taille (3 * embed_dim + 14) qui sera utilisé par les 
+    Sortie: Un vecteur de taille (3 * embed_dim + 19) qui sera utilisé par les 
             couches fully-connected de la policy et value networks de SB3.
     
     Args:
@@ -35,8 +35,8 @@ class HybridFeatureExtractor(BaseFeaturesExtractor):
     
     def __init__(self, observation_space: gym.spaces.Dict, embed_dim: int = 16):
         # Calculer la dimension totale de sortie
-        # 3 embeddings (ball, paddle, angle) * embed_dim + 14 features continues
-        features_dim = (3 * embed_dim) + 14
+        # 3 embeddings (ball, paddle, angle) * embed_dim + 19 features continues
+        features_dim = (3 * embed_dim) + 19
         
         super().__init__(observation_space, features_dim)
         
@@ -65,7 +65,7 @@ class HybridFeatureExtractor(BaseFeaturesExtractor):
                 - 'ball_idx': Tensor de shape (batch, 1) avec index de cellule balle
                 - 'paddle_idx': Tensor de shape (batch, 1) avec index de cellule raquette
                 - 'angle_idx': Tensor de shape (batch, 1) avec index d'angle
-                - 'continuous': Tensor de shape (batch, 14) avec features continues
+                - 'continuous': Tensor de shape (batch, 19) avec features continues
         
         Returns:
             Tensor de shape (batch, features_dim) avec toutes les features concaténées
@@ -82,8 +82,8 @@ class HybridFeatureExtractor(BaseFeaturesExtractor):
         angle_embed = self.angle_embedding(angle_idx)  # (batch, embed_dim)
         
         # 3. Récupérer les features continues
-        continuous = observations["continuous"]  # (batch, 14)
+        continuous = observations["continuous"]  # (batch, 19)
         
         # 4. Concaténer tout le long de la dimension des features
-        # Résultat: (batch, 3*embed_dim + 14)
+        # Résultat: (batch, 3*embed_dim + 19)
         return th.cat([ball_embed, paddle_embed, angle_embed, continuous], dim=1)
