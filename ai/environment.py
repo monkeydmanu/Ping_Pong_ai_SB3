@@ -147,6 +147,7 @@ class PingPongEnv(gym.Env):
         self.double_hit_fault = False
         self.service_fault = False
         self.pending_hit_reward = False
+        self.pending_wrong_direction = False  # Frappe dans la mauvaise direction (pending)
         self.ball_out_result = None  # 'win' ou 'loss'
         self.point_winner_side = None  # 'left' ou 'right'
         
@@ -266,6 +267,7 @@ class PingPongEnv(gym.Env):
         self.double_hit_fault = False
         self.service_fault = False
         self.pending_hit_reward = False
+        self.pending_wrong_direction = False  # Frappe dans la mauvaise direction (pending)
         self.ball_out_result = None # flag temporaire qui s'active et se désactive quand on touche une balle, pour donner une récompense une seule fois
         self.point_winner_side = None
         
@@ -490,6 +492,15 @@ class PingPongEnv(gym.Env):
                             # FAUTE : frapper sans rebond sur notre table
                             self.fault_volley = True
                         
+                        # DÉTECTION DIRECTION INCORRECTE : Frapper la balle vers son propre camp
+                        # Si agent à gauche : balle doit aller vers la droite (vel[0] > 0)
+                        # Si agent à droite : balle doit aller vers la gauche (vel[0] < 0)
+                        ball_vel_x = self.ball.vel[0]
+                        if agent_paddle_side == 'left' and ball_vel_x < -10:  # Seuil pour éviter faux positifs sur petits angles
+                            self.pending_wrong_direction = True
+                        elif agent_paddle_side == 'right' and ball_vel_x > 10:
+                            self.pending_wrong_direction = True
+                        
                         # Réactiver la gravité au premier contact si spawn statique
                         self.ball.gravity_enabled = True
                         
@@ -509,6 +520,7 @@ class PingPongEnv(gym.Env):
                 if self.opponent_paddle.can_hit:
                     ball_hit_opponent = self._check_paddle_collision(self.opponent_paddle, "opponent")
                     if ball_hit_opponent:
+
                         opponent_paddle_side = 'right' if self.agent_side == 'left' else 'left'
                         
                         # Sauvegarder qui a frappé avant
@@ -608,10 +620,13 @@ class PingPongEnv(gym.Env):
             "ball_on_agent_side": self._is_ball_on_agent_side(),
             "ball_bounces_agent": self._get_agent_side_bounces(),
             "ball_bounces_opponent": self._get_opponent_side_bounces(),
+            "wrong_direction": self.pending_wrong_direction,  # Frappe dans la mauvaise direction (pending)
         }
 
         # Calcul du reward (shaping + terminal) intégré à la step
         reward = self._compute_shaped_reward(info)
+
+        #print("Reward step:", reward)
         
         # Rendu si demandé
         if self.render_mode == "human":
@@ -785,6 +800,14 @@ class PingPongEnv(gym.Env):
                 if our_bounces_at_hit == 1:
                     # EXCELLENT : frappe après 1 rebond
                     reward += 5.0 / REWARD_SCALE  # = 0.5 (signal FORT)
+                    self.pending_hit_reward = False
+            
+            # PÉNALITÉ DIRECTION INCORRECTE : Frapper vers son propre camp (comportement très mauvais)
+            if self.pending_wrong_direction:
+                reward -= 8.0 / REWARD_SCALE  # = -0.8 (pénalité FORTE - presque aussi grave qu'une défaite)
+                self.pending_wrong_direction = False  # Consommer le flag (une seule fois par frappe)
+                if self.render_mode == "human":
+                    print("    ⚠️ WRONG DIRECTION HIT! Ball sent backwards!")
             
 
             

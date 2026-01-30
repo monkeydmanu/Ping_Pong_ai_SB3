@@ -427,3 +427,5 @@ if __name__ == "__main__":
 
 # checkpoint spécifique:
 # python train_sb3.py --load models_sb3/checkpoints/ppo_pingpong_50000_steps.zip --timesteps 100000
+
+# tensorboard --logdir=./logs_sb3/tensorboard/
