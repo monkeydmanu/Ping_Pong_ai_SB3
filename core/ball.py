@@ -2,6 +2,7 @@
 Classe représentant la balle et sa physique.
 """
 
+import random
 import numpy as np
 from config import GRAVITY, BALL_RADIUS, FPS, BALL_SPEED_SCALE
 from engine.collision import check_table_collision
@@ -88,30 +89,37 @@ def spawn_ball_left(table, game_mode=False, train_phase=0):
         angular_speed=0
     )
     else:
-        if train_phase == 0:
-            ball = Ball(
-                x=x_table + 150,  # Bord gauche de la table # + 30
-                y=y_table - 220,  # Au-dessus de la table
-                vx=0,
-                vy=0,
-                angular_speed=0
-            )
-        elif train_phase == 1:
-            ball = Ball(
-                x=x_table + 80,  # Bord gauche de la table # + 30
+        ball = Ball(
+                x=x_table + random.randint(50, 200),  # Bord gauche de la table # + 150
                 y=y_table - 300,  # Au-dessus de la table
                 vx=0,
                 vy=0,
                 angular_speed=0
             )
-        else:
-            ball = Ball(
-                x=x_table + 30,  # Bord gauche de la table # + 30
-                y=y_table - 300,  # Au-dessus de la table
-                vx=0,
-                vy=0,
-                angular_speed=0
-            )
+        # if train_phase == 0:
+        #     ball = Ball(
+        #         x=x_table + 150,  # Bord gauche de la table # + 30
+        #         y=y_table - 220,  # Au-dessus de la table
+        #         vx=0,
+        #         vy=0,
+        #         angular_speed=0
+        #     )
+        # elif train_phase == 1:
+        #     ball = Ball(
+        #         x=x_table + 80,  # Bord gauche de la table # + 30
+        #         y=y_table - 300,  # Au-dessus de la table
+        #         vx=0,
+        #         vy=0,
+        #         angular_speed=0
+        #     )
+        # else:
+        #     ball = Ball(
+        #         x=x_table + 30,  # Bord gauche de la table # + 30
+        #         y=y_table - 300,  # Au-dessus de la table
+        #         vx=0,
+        #         vy=0,
+        #         angular_speed=0
+        #     )
 
     ball.service = 'left'  # Service depuis la gauche
 
@@ -131,31 +139,32 @@ def spawn_ball_right(table, game_mode=False, train_phase=0):
         angular_speed=0
     )
     else:
-        if train_phase == 0:
-            ball = Ball(
-                x=x_table + w_table - 150,  # Bord droit de la table
-                y=y_table - 220,  # Au-dessus de la table
-                vx=0,
-                vy=0,
-                angular_speed=0
-            )
-        elif train_phase == 1:
-            ball = Ball(
-                x=x_table + w_table - 80,  # Bord droit de la table
-                y=y_table - 300,  # Au-dessus de la table
-                vx=0,
-                vy=0,
-                angular_speed=0
-            )
-        else:
-            ball = Ball(
-                x=x_table + w_table - 30,  # Bord droit de la table
-                y=y_table - 300,  # Au-dessus de la table
-                vx=0,
-                vy=0,
-                angular_speed=0
-            )
+        #if train_phase == 0:
+        ball = Ball(
+            x=x_table + w_table - 200,  # Bord droit de la table # - 60, v2 : -200
+            y=y_table - 250,  # Au-dessus de la table random.randint(150, 400)
+            vx=random.randint(-600, -300), # random.randint(-800, -500), v2 : random.randint(-600, -300)
+            vy=random.randint(-300, -250), # random.randint(-400, -300), v2 : random.randint(-300, -250)
+            angular_speed=random.randint(-100, 100) #random.randint(-300, 300) pour les mins et max pour que ça fasse un rebond correct mais (-100, 100) pour apprendre
+        )
+        # elif train_phase == 1:
+        #     ball = Ball(
+        #         x=x_table + w_table - 80,  # Bord droit de la table
+        #         y=y_table - 300,  # Au-dessus de la table
+        #         vx=0,
+        #         vy=0,
+        #         angular_speed=0
+        #     )
+        # else:
+        #     ball = Ball(
+        #         x=x_table + w_table - 30,  # Bord droit de la table
+        #         y=y_table - 300,  # Au-dessus de la table
+        #         vx=0,
+        #         vy=0,
+        #         angular_speed=0
+        #     )
 
-    ball.service = 'right'  # Service depuis la droite
+    if game_mode: # pour que ball.service = None en mode entrainement car sinon service_faut tjs True
+        ball.service = 'right'  # Service depuis la droite
 
     return ball

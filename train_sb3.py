@@ -357,7 +357,7 @@ def main():
     )
     
     # Environnement d'évaluation (sans render) - Toujours en phase finale (game_mode=True)
-    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False, game_mode=True), 
+    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False, game_mode=False), 
                        eval_log_path)
     
     eval_callback = EvalCallback(
