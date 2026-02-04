@@ -284,6 +284,9 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
 
     if est_mousse:
         _, _, vel_x, vel_y, angle, width, height = rectangle.get_info()
+        # Utiliser la vitesse lissée au lieu de la vitesse instantanée pour le transfert
+        if hasattr(rectangle, 'smoothed_vel'):
+            vel_x, vel_y = rectangle.smoothed_vel[0], rectangle.smoothed_vel[1]
         x, y, _, _ = rectangle.get_rect()
     elif est_table:
         x, y, width, height = rectangle.get_rect()
@@ -301,6 +304,17 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
 
     if not hit:
         return
+
+    
+    if est_mousse:
+        print(f"{vel_x=}, {vel_y=}")
+        print("Avant collision:")
+        print(f"{angle=}")
+        print(f"{vel_x=}, {vel_y=}")
+        # Afficher la vitesse angulaire lissée si disponible
+        if hasattr(rectangle, 'smoothed_angular_velocity'):
+            print(f"smoothed_angular_velocity={rectangle.smoothed_angular_velocity:.2f} °/s")
+        print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
 
     # Repositionnement pour éviter l'enfoncement
     ball.pos[0] = contact[0] + normal[0] * ball.radius
@@ -382,6 +396,11 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
 
         ball.vel[0], ball.vel[1] = reduction_speed(ball.vel[0], ball.vel[1], est_mousse)
 
+    if est_mousse:
+        print("Après collision:")
+        print(f"{vel_x=}, {vel_y=}")
+        print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
+
 
 
 
@@ -417,12 +436,13 @@ def check_ball_paddle(ball, paddle, screen):
     # Sauvegarder la position avant collision pour détecter si collision a eu lieu
     old_pos = ball.pos.copy()
     
-
     check_rect_collision(ball, paddle, est_mousse=True, est_table=False, a=0.35, screen=screen)
 
     
     # Si la position a changé, une collision a eu lieu
     if not np.array_equal(old_pos, ball.pos):
+        
+        print("="*70)
         paddle.can_hit = False  # La raquette ne peut plus toucher la balle
 
 

@@ -82,7 +82,7 @@ def spawn_ball_left(table, game_mode=False, train_phase=0):
 
     if game_mode:
         ball = Ball(
-        x=x_table + 30,  # Bord gauche de la table # + 30
+        x=x_table + 70,  # Bord gauche de la table # + 30
         y=y_table - 300,  # Au-dessus de la table
         vx=0,
         vy=0,
@@ -90,7 +90,7 @@ def spawn_ball_left(table, game_mode=False, train_phase=0):
     )
     else:
         ball = Ball(
-                x=x_table + random.randint(50, 200),  # Bord gauche de la table # + 150
+                x=x_table + random.randint(50, 200),  # Bord gauche de la table # + 150, v2 : random.randint(50, 200)
                 y=y_table - 300,  # Au-dessus de la table
                 vx=0,
                 vy=0,
@@ -132,7 +132,7 @@ def spawn_ball_right(table, game_mode=False, train_phase=0):
 
     if game_mode:
         ball = Ball(
-        x=x_table + w_table - 30,  # Bord droit de la table
+        x=x_table + w_table - 70,  # Bord droit de la table
         y=y_table - 300,  # Au-dessus de la table
         vx=0,
         vy=0,

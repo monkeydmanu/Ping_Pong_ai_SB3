@@ -32,6 +32,16 @@ class Paddle:
         self.x_min = x_min  # Limite gauche
         self.x_max = x_max  # Limite droite
         self.can_hit = True  # Booléen pour savoir si la raquette peut toucher la balle
+        
+        # Historique des vitesses pour moyenne lissée (éviter faux contacts)
+        self.velocity_history = []  # Liste des 5 dernières vitesses
+        self.smoothed_vel = np.array([0.0, 0.0], dtype=float)  # Vitesse lissée
+        
+        # Vitesse angulaire (rotation du poignet)
+        self.prev_angle = self.angle
+        self.angular_velocity = 0.0  # Vitesse de rotation instantanée (°/s)
+        self.angular_velocity_history = []  # Historique des 10 dernières vitesses angulaires
+        self.smoothed_angular_velocity = 0.0  # Vitesse angulaire lissée
 
     # Mise à jour de la position selon la vélocité et le dt
     def update(self, dt, speed_factor=1.0):
@@ -45,6 +55,38 @@ class Paddle:
         speed_magnitude = np.linalg.norm(self.vel)
         if speed_magnitude > self.max_speed:
             self.vel = self.vel / speed_magnitude * self.max_speed
+        
+        # Mettre à jour l'historique des vitesses (garder les 10 dernières frames)
+        self.velocity_history.append(self.vel.copy())
+        if len(self.velocity_history) > 10:
+            self.velocity_history.pop(0)
+        
+        # Calculer la moyenne lissée (moyenne mobile des dernières vitesses)
+        if len(self.velocity_history) > 0:
+            self.smoothed_vel = np.mean(self.velocity_history, axis=0)
+        else:
+            self.smoothed_vel = self.vel.copy()
+        
+        # Calculer la vitesse angulaire (rotation du poignet)
+        angle_diff = self.angle - self.prev_angle
+        # Normaliser la différence d'angle dans [-180, 180]
+        while angle_diff > 180:
+            angle_diff -= 360
+        while angle_diff < -180:
+            angle_diff += 360
+        self.angular_velocity = angle_diff / dt if dt > 0 else 0.0
+        self.prev_angle = self.angle
+        
+        # Historique de la vitesse angulaire (garder les 10 dernières frames)
+        self.angular_velocity_history.append(self.angular_velocity)
+        if len(self.angular_velocity_history) > 10:
+            self.angular_velocity_history.pop(0)
+        
+        # Moyenne lissée de la vitesse angulaire
+        if len(self.angular_velocity_history) > 0:
+            self.smoothed_angular_velocity = np.mean(self.angular_velocity_history)
+        else:
+            self.smoothed_angular_velocity = self.angular_velocity
         
         # Appliquer speed_factor à la vélocité pour curriculum
         self.pos += self.vel * dt * speed_factor

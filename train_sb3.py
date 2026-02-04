@@ -147,19 +147,19 @@ def main():
                         help='Vérifier que l\'environnement est compatible SB3')
     parser.add_argument('--embed-dim', type=int, default=16,
                         help='Dimension des embeddings spatiaux')
-    parser.add_argument('--learning-rate', type=float, default=1e-4,
+    parser.add_argument('--learning-rate', type=float, default=5e-5,
                         help='Learning rate pour PPO')
     parser.add_argument('--n-steps', type=int, default=2048,
                         help='Nombre de steps avant chaque update')
     parser.add_argument('--batch-size', type=int, default=128,
                         help='Taille des mini-batches')
-    parser.add_argument('--n-epochs', type=int, default=10,
+    parser.add_argument('--n-epochs', type=int, default=5,
                         help='Nombre d\'epochs par update')
     parser.add_argument('--gamma', type=float, default=0.995,
                         help='Discount factor')
     parser.add_argument('--gae-lambda', type=float, default=0.95,
                         help='GAE lambda')
-    parser.add_argument('--ent-coef', type=float, default=0.002,
+    parser.add_argument('--ent-coef', type=float, default=0.005,
                         help='Coefficient d\'entropie (exploration)')
     parser.add_argument('--log-name', type=str, default=None,
                         help='Nom de la run TensorBoard (ignoré si on charge un modèle)')
@@ -280,8 +280,8 @@ def main():
         # Architecture des réseaux Actor/Critic après le feature extractor
         # net_arch: couches partagées puis séparées pour pi (policy) et vf (value function)
         net_arch=dict(
-            pi=[256, 256],  # 2 couches de 256 neurones pour l'actor
-            vf=[256, 256]   # 2 couches de 256 neurones pour le critic
+            pi=[512, 256],  # 2 couches de 256 neurones pour l'actor
+            vf=[512, 256]   # 2 couches de 256 neurones pour le critic
         ),
         
         # Fonction d'activation
@@ -296,6 +296,7 @@ def main():
     print(f"  • n_epochs: {args.n_epochs}")
     print(f"  • gamma: {args.gamma}")
     print(f"  • gae_lambda: {args.gae_lambda}")
+    print(f"  • clip_range: 0.3")
     print(f"  • ent_coef: {args.ent_coef}")
     
     # === CRÉER OU CHARGER LE MODÈLE ===
@@ -330,7 +331,7 @@ def main():
             n_epochs=args.n_epochs,
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,
-            clip_range=0.2,
+            clip_range=0.3,
             ent_coef=args.ent_coef,
             vf_coef=0.5,
             max_grad_norm=0.5,
@@ -364,7 +365,7 @@ def main():
         eval_env,
         best_model_save_path=best_model_path,
         log_path=eval_log_path,
-        eval_freq=10000,
+        eval_freq=100000,
         deterministic=True,
         render=False,
         n_eval_episodes=30,

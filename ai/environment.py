@@ -158,6 +158,8 @@ class PingPongEnv(gym.Env):
         
         # Accumulation des rewards pour l'épisode
         self.episode_reward_accumulation = 0.0
+        self.coef_speed = 0.0
+        self.coef_spin = 0.0
 
         # Proximité du passage de balle à TABLE_Y (après frappe agent)
         self.table_cross_proximity = None
@@ -244,8 +246,10 @@ class PingPongEnv(gym.Env):
             if self.agent_side == "left":
                 if self.game_mode == False:
                     prob = random.randint(1, 10) # de 1 à 10 (inclus)
-                    if (prob == 1) or (prob == 2):
+                    if prob <= 4: # 40% de chance de servir à gauche
                         self.ball = spawn_ball_left(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
+                        self.agent_paddle.pos[0] = 150
+                        self.agent_paddle.pos[1] = TABLE_Y - 150
                     else: 
                         self.ball = spawn_ball_right(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
                         self.ball.service = None
@@ -296,6 +300,7 @@ class PingPongEnv(gym.Env):
         self.ball_out_result = None # flag temporaire qui s'active et se désactive quand on touche une balle, pour donner une récompense une seule fois
         self.point_winner_side = None
         self.coef_speed = 0.0
+        self.coef_spin = 0.0
         
         observation = self._get_observation()
         info = {}
@@ -318,13 +323,14 @@ class PingPongEnv(gym.Env):
 
         # affichage vel joueur droite
         #print(f"Vel joueur droite dans step(): {self.opponent_paddle.vel}")
-        
+
         self.steps += 1
         self.point_winner_side = None  # reset du vainqueur pour ce step
         agent_is_left = (self.agent_side == "left")
         agent_paddle_side = 'left' if agent_is_left else 'right'
 
         self.coef_speed = 0.0
+        self.coef_spin = 0.0
         
         # === Appliquer l'action de l'agent ===
         self._apply_action(self.agent_paddle, action)
@@ -530,13 +536,23 @@ class PingPongEnv(gym.Env):
                         elif agent_paddle_side == 'right' and ball_vel_x > 50:
                             self.pending_wrong_direction = True
 
-                        max_vel = 1000
+                        max_vel = 500
+                        max_spin = 700
                         if not self.pending_wrong_direction:
-                            ball_speed = np.sqrt(self.ball.vel[0]**2 + self.ball.vel[1]**2)
+
+                            ball_speed = abs(self.ball.vel[0])
                             if ball_speed >= max_vel:
-                                coef_speed = 1
+                                self.coef_speed = 1
                             else:
-                                coef_speed = ball_speed / max_vel
+                                self.coef_speed = ball_speed / max_vel
+                            
+                            ball_spin = abs(self.ball.angular_speed)
+                            if ball_spin >= max_spin:
+                                self.coef_spin = 1
+                            else:
+                                self.coef_spin = ball_spin / max_spin
+
+
                         
                         # Réactiver la gravité au premier contact si spawn statique
                         self.ball.gravity_enabled = True
@@ -864,6 +880,7 @@ class PingPongEnv(gym.Env):
                     print("    ⚠️ WRONG DIRECTION HIT! Ball sent backwards!")
             else:
                 reward += (3.0 * self.coef_speed) / REWARD_SCALE # favorise une balle rapide
+                reward += (2.0 * self.coef_spin) / REWARD_SCALE # favorise une balle avec du spin
             
 
             
