@@ -122,19 +122,22 @@ class Game:
             vel_x = (new_x - self.last_agent_paddle_pos[0]) / dt
             vel_y = (new_y - self.last_agent_paddle_pos[1]) / dt
             
-            # Ajouter à l'historique et faire une moyenne lissée (derniers 10 frames)
+            # Ajouter à l'historique et faire une moyenne lissée (fenêtre courte pour garder des pics de vitesse)
             self.agent_paddle_vel_history.append(np.array([vel_x, vel_y]))
-            if len(self.agent_paddle_vel_history) > 10:
+            smooth_window = 12
+            if len(self.agent_paddle_vel_history) > smooth_window:
                 self.agent_paddle_vel_history.pop(0)
             
-            # Moyenne lissée de la vélocité: moyenne des 10 derniers (ou moins si moins de 10)
-            recent_vels = self.agent_paddle_vel_history[-10:] if self.agent_paddle_vel_history else [np.array([0, 0])]
+            # Moyenne lissée de la vélocité: moyenne des dernières frames (fenêtre courte)
+            recent_vels = self.agent_paddle_vel_history[-smooth_window:] if self.agent_paddle_vel_history else [np.array([0, 0])]
             avg_vel = np.mean(recent_vels, axis=0)
             
             # Appliquer la nouvelle position et vélocité lissée
             self.env.agent_paddle.pos[0] = new_x
             self.env.agent_paddle.pos[1] = new_y
             self.env.agent_paddle.vel = avg_vel  # Vélocité lissée
+            # Relever le plafond de vitesse en contrôle souris, mais un peu réduit
+            self.env.agent_paddle.max_speed = max(self.env.agent_paddle.max_speed, float(np.linalg.norm(avg_vel)) * 0.8)
             
             # Stocker la vélocité réelle pour l'affichage
             self.displayed_paddle_vel = tuple(avg_vel)
@@ -198,14 +201,17 @@ class Game:
             vel_y = (new_y - self.last_opponent_paddle_pos[1]) / dt
 
             self.opponent_paddle_vel_history.append(np.array([vel_x, vel_y]))
-            if len(self.opponent_paddle_vel_history) > 10:
+            smooth_window = 5
+            if len(self.opponent_paddle_vel_history) > smooth_window:
                 self.opponent_paddle_vel_history.pop(0)
-            recent_vels = self.opponent_paddle_vel_history[-10:] if self.opponent_paddle_vel_history else [np.array([0, 0])]
+            recent_vels = self.opponent_paddle_vel_history[-smooth_window:] if self.opponent_paddle_vel_history else [np.array([0, 0])]
             avg_vel = np.mean(recent_vels, axis=0)
 
             paddle.pos[0] = new_x
             paddle.pos[1] = new_y
             paddle.vel = avg_vel
+            # Relever le plafond de vitesse en contrôle souris, mais un peu réduit
+            paddle.max_speed = max(paddle.max_speed, float(np.linalg.norm(avg_vel)) * 0.8)
 
             self.displayed_opponent_paddle_vel = tuple(avg_vel)
 

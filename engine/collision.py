@@ -104,173 +104,128 @@ def reduction_speed(vx, vy, est_mousse):
         vy *= restitution_verticale(vy, VPX_FRAME_MAX*1.2, 0.22)
     return vx, vy
 
+
 def contact_cercle_rectangle(ball_center_x, ball_center_y, radius,
-                             rect_x, rect_y, width, height, angle_deg, screen=None):
+                             rect_x, rect_y, width, height, angle_deg, screen=None, est_mousse=False):
     """
-    Retourne (hit, contact_world, normal_world, tangent_world, face)
-    - hit: bool collision
-    - contact_world: (x,y) point de contact (approx) en coordonnées monde
-    - normal_world: (nx, ny) normale unitaire pointant vers l'extérieur (depuis la surface)
-    - tangent_world: (tx, ty) vecteur tangent unitaire (direction de la surface)
-    - face: 'haut' / 'bas' / 'gauche' / 'droite' / 'inside' / 'corner'
-    Note: angle_deg est l'angle Pygame (0° = haut, anti-horaire).
+    Système : 0° = Haut, Rotation Horaire.
+    Repère : Pygame (Y+ vers le bas).
     """
 
     # 0) Setup
     half_w = width / 2.0
     half_h = height / 2.0
-    rect_cx = rect_x + half_w   # centre du rectangle (x)
-    rect_cy = rect_y + half_h   # centre du rectangle (y)
+    rect_cx = rect_x + half_w
+    rect_cy = rect_y + half_h
 
-    # 1) conversion angle Pygame -> angle trigonométrique (0° = droite)
-    # Pygame: Y+ = bas, 0° = haut (CCW)
-    # Trig:   Y+ = haut, 0° = droite (CCW)
-    # Conversion: angle_trig = 90 - angle_pygame
-    theta = np.radians(90 - angle_deg)
+    # 1) Angle en radians
+    theta = np.radians(angle_deg)
+    cos_t = np.cos(theta)
+    sin_t = np.sin(theta)
 
-    # 2) translation balle -> repère centré sur rectangle
+    # 2) Translation
     dx = ball_center_x - rect_cx
     dy = ball_center_y - rect_cy
 
-    # 3) rotation inverse pour ramener dans repère non-roté du rectangle
-    cos_t = np.cos(-theta)
-    sin_t = np.sin(-theta)
-    rx = dx * cos_t - dy * sin_t
-    ry = dx * sin_t + dy * cos_t
+    # 3) Rotation inverse (pour passer du monde au repère local du rectangle)
+    # Matrice de rotation horaire inverse : 
+    # rx =  dx * cos + dy * sin
+    # ry = -dx * sin + dy * cos
+    rx = dx * cos_t + dy * sin_t
+    ry = -dx * sin_t + dy * cos_t
 
-    # 4) trouver le point le plus proche sur le rectangle axis-aligned
+    # 4) Trouver le point le plus proche sur le rectangle local (aligné sur les axes)
     closest_x = np.clip(rx, -half_w, half_w)
     closest_y = np.clip(ry, -half_h, half_h)
 
-    # 5) distance au point le plus proche
+    # 5) Test de collision
     dist_x = rx - closest_x
     dist_y = ry - closest_y
     distance_sq = dist_x*dist_x + dist_y*dist_y
     hit = distance_sq <= radius*radius
 
-    # valeurs par défaut si pas de collision
-    contact_world = None
-    normal_world = None
-    tangent_world = None
+    # Initialisation variables retour
+    contact_local = (closest_x, closest_y)
     face = None
     corner_ratio = None
+    n_local = (0.0, 0.0)
 
-
-    # c'était ici le if not hit return
-
-
-    # 6) point de contact en coordonnées locales (repère non-roté)
-    contact_local_x = closest_x
-    contact_local_y = closest_y
-
-    # 7) classification : quel axe a été clampé ?
+    # 6) & 7) Classification de la face et normale locale
     outside_x = (rx < -half_w) or (rx > half_w)
     outside_y = (ry < -half_h) or (ry > half_h)
 
     if outside_x and not outside_y:
-        # collision avec un bord vertical (gauche or droite)
         face = 'gauche' if rx < -half_w else 'droite'
-        # normale locale pointe vers l'extérieur du rectangle
         n_local = (-1.0, 0.0) if rx < -half_w else (1.0, 0.0)
     elif outside_y and not outside_x:
-        # collision avec un bord horizontal (haut or bas)
         face = 'haut' if ry < -half_h else 'bas'
         n_local = (0.0, -1.0) if ry < -half_h else (0.0, 1.0)
     elif (not outside_x) and (not outside_y):
-        # le centre du cercle est au dessus de la surface (proche d'une face interne)
-        # ici on est collé à l'intérieur de la projection : considérer la face la plus proche
-        # calculer les distances aux 4 bords et choisir la plus petite
+        # Cas où le centre est à l'intérieur
         dist_to_right = half_w - rx
         dist_to_left  = rx + half_w
         dist_to_top   = ry + half_h
         dist_to_bottom= half_h - ry
         min_dist = min(dist_to_left, dist_to_right, dist_to_top, dist_to_bottom)
-        if min_dist == dist_to_left:
-            face = 'gauche'; n_local = (-1.0, 0.0)
-        elif min_dist == dist_to_right:
-            face = 'droite'; n_local = (1.0, 0.0)
-        elif min_dist == dist_to_top:
-            face = 'haut'; n_local = (0.0, -1.0)
-        else:
-            face = 'bas'; n_local = (0.0, 1.0)
+        if min_dist == dist_to_left:   face = 'gauche'; n_local = (-1.0, 0.0)
+        elif min_dist == dist_to_right: face = 'droite'; n_local = (1.0, 0.0)
+        elif min_dist == dist_to_top:   face = 'haut';   n_local = (0.0, -1.0)
+        else:                           face = 'bas';    n_local = (0.0, 1.0)
     else:
-        # Coin : déterminer lequel
-        left  = rx < -half_w
-        right = rx >  half_w
-        top   = ry < -half_h
-        bottom= ry >  half_h
-        if left and top:
-            face = 'corner_hg'
-            dist_edge_x = (-half_w) - rx  # positif
-        elif right and top:
-            face = 'corner_hd'
-            dist_edge_x = rx - half_w
-        elif left and bottom:
-            face = 'corner_bg'
-            dist_edge_x = (-half_w) - rx
-        else:
-            face = 'corner_bd'
-            dist_edge_x = rx - half_w
-        # ratio basé sur distance horizontale
+        # Coins
+        left = rx < -half_w
+        top = ry < -half_h
+        face = 'corner_' + ('h' if top else 'b') + ('g' if left else 'd')
+        # Ratio pour l'effet
+        dist_edge_x = abs(rx) - half_w
         corner_ratio = min(1.0, abs(dist_edge_x) / radius)
+        
         nx_local = rx - closest_x
         ny_local = ry - closest_y
         length = np.hypot(nx_local, ny_local)
-        n_local = (0.0, 0.0) if length == 0 else (nx_local/length, ny_local/length)
+        n_local = (nx_local/length, ny_local/length) if length != 0 else (0,0)
 
-    # 8) projeter contact_local -> monde (rotation + translation)
-    cos_t_forward = np.cos(theta)
-    sin_t_forward = np.sin(theta)
-    contact_world_x = contact_local_x * cos_t_forward - contact_local_y * sin_t_forward + rect_cx
-    contact_world_y = contact_local_x * sin_t_forward + contact_local_y * cos_t_forward + rect_cy
+    # 8) Projection du point de contact : Local -> Monde
+    # Matrice de rotation horaire : 
+    # wx =  rx * cos - ry * sin
+    # wy =  rx * sin + ry * cos
+    contact_world_x = closest_x * cos_t - closest_y * sin_t + rect_cx
+    contact_world_y = closest_x * sin_t + closest_y * cos_t + rect_cy
     contact_world = (contact_world_x, contact_world_y)
 
-    # 9) normale locale -> normale monde (rotation)
-    nx_world = n_local[0] * cos_t_forward - n_local[1] * sin_t_forward
-    ny_world = n_local[0] * sin_t_forward + n_local[1] * cos_t_forward
-
-    # normaliser par sécurité la normale pour qu'elle est une norme de 1
+    # 9) Projection de la normale : Local -> Monde
+    # On utilise LA MÊME matrice que l'étape 8
+    nx_world = n_local[0] * cos_t - n_local[1] * sin_t
+    ny_world = n_local[0] * sin_t + n_local[1] * cos_t
+    
+    # Normalisation de sécurité
     norm = np.hypot(nx_world, ny_world)
     if norm != 0:
-        nx_world /= norm; ny_world /= norm
+        nx_world /= norm
+        ny_world /= norm
     normal_world = (nx_world, ny_world)
 
-    # 10) tangente = rot90(normal) (unité)
-    tx_world, ty_world = -ny_world, nx_world
-    tangent_world = (tx_world, ty_world)
+    # 10) Tangente
+    # Pour un rebond, la tangente est souvent utile pour le spin
+    tangent_world = (-ny_world, nx_world)
 
-    # 11) Affichage Pygame du rectangle (après rotation)
+    # 11) Dessin debug
     if screen is not None:
-    # Coins locaux du rectangle
-        corners_local = [
-            (-half_w, -half_h),
-            ( half_w, -half_h),
-            ( half_w,  half_h),
-            (-half_w,  half_h)
-        ]
+        corners_local = [(-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)]
         corners_world = []
-        for x, y in corners_local:
-            wx = x * cos_t_forward - y * sin_t_forward + rect_cx
-            wy = x * sin_t_forward + y * cos_t_forward + rect_cy
+        for cx, cy in corners_local:
+            wx = cx * cos_t - cy * sin_t + rect_cx
+            wy = cx * sin_t + cy * cos_t + rect_cy
             corners_world.append((int(wx), int(wy)))
-        
-        # Tracer le rectangle et son centre toujours
         pygame.draw.polygon(screen, (0, 255, 0), corners_world, 2)
-        pygame.draw.circle(screen, (255, 0, 0), (int(rect_cx), int(rect_cy)), 4)
-
-        # Tracer la balle toujours
-        pygame.draw.circle(screen, (255, 255, 0), (int(ball_center_x), int(ball_center_y)), int(radius), 1)
-
-        # Tracer le point de contact uniquement si collision
         if hit:
-            pygame.draw.circle(screen, (0, 0, 255),
-                            (int(contact_world[0]), int(contact_world[1])), 4)
-            
-    
-    if not hit:
-        return False, contact_world, normal_world, tangent_world, face, corner_ratio
+            pygame.draw.circle(screen, (0, 0, 255), (int(contact_world[0]), int(contact_world[1])), 4)
+            # Dessin de la normale en rouge
+            pygame.draw.line(screen, (255, 0, 0), contact_world, 
+                             (contact_world[0] + nx_world * 20, contact_world[1] + ny_world * 20), 2)
 
-    return True, contact_world, normal_world, tangent_world, face, corner_ratio
+    return hit, contact_world, normal_world, tangent_world, face, corner_ratio
+
 
 # a=0.35 pour la mousse et 0.22 pour la table
 def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=0.2, screen=None):
@@ -302,7 +257,7 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
 
     hit, contact, normal, tangent, face, corner_ratio = contact_cercle_rectangle(
         ball_center_x, ball_center_y, ball.radius,
-        x, y, width, height, angle, screen
+        x, y, width, height, angle, screen, est_mousse
     )
 
     # hit              # bool - Y a-t-il collision? (cercle intersecte rectangle)
@@ -318,15 +273,14 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
         return
 
     
-    if est_mousse:
-        print(f"{vel_x=}, {vel_y=}")
-        print("Avant collision:")
-        print(f"{angle=}")
-        print(f"{vel_x=}, {vel_y=}")
-        # Afficher la vitesse angulaire lissée si disponible
-        if hasattr(rectangle, 'smoothed_angular_velocity'):
-            print(f"smoothed_angular_velocity={rectangle.smoothed_angular_velocity:.2f} °/s")
-        print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
+    # if est_mousse:
+    #     print("Avant collision:")
+    #     print(f"{angle=}")
+    #     print(f"raquette {vel_x=}, {vel_y=}")
+    #     # Afficher la vitesse angulaire lissée si disponible
+    #     if hasattr(rectangle, 'smoothed_angular_velocity'):
+    #         print(f"smoothed_angular_velocity={rectangle.smoothed_angular_velocity:.2f} °/s")
+    #     print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
 
     # Repositionnement pour éviter l'enfoncement
     ball.pos[0] = contact[0] + normal[0] * ball.radius
@@ -362,9 +316,9 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
         ball.vel[0] -= 2 * v_dot_n * normal[0]
         ball.vel[1] -= 2 * v_dot_n * normal[1]
         
-        if est_mousse:
-            print(f"  [1] Après réflexion: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
-            print(f"face={face}")
+        # print(f"face={face}, {normal=}, {tangent=}")
+        # if est_mousse:
+        #     print(f"  [1] Après réflexion: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
 
         # === TRANSFERT VITESSE RAQUETTE → BALLE (seulement pour la mousse/raquette) ===
         if est_mousse:
@@ -375,8 +329,8 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
             ball.vel[0] += vel_x * velocity_transfer
             ball.vel[1] += vel_y * velocity_transfer
             
-            if est_mousse:
-                print(f"  [2] Après transfert raquette: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
+            # # if est_mousse:
+                # print(f"  [2] Après transfert raquette: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
             
             # === GÉNÉRATION DE SPIN BASÉE SUR OÙ ON TAPE LA BALLE ===
             # Vecteur du centre de la balle vers le point de contact
@@ -402,6 +356,17 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
             
             ball.angular_speed += generated_spin
 
+            # === SPIN GÉNÉRÉ PAR LA VITESSE ANGULAIRE DE LA RAQUETTE ===
+            # Convention demandée :
+            # - vitesse angulaire > 0 => accentue spin horaire (positif)
+            # - vitesse angulaire < 0 => accentue spin antihoraire (négatif)
+            if hasattr(rectangle, 'smoothed_angular_velocity'):
+                angular_spin_factor = 0.02  # facteur de conversion deg/s -> spin
+                angular_dir = 1 if rectangle.smoothed_angular_velocity >= 0 else -1
+                angular_strength = abs(rectangle.smoothed_angular_velocity)
+                generated_spin_wrist = angular_strength * angular_spin_factor * angular_dir
+                ball.angular_speed += generated_spin_wrist
+
         # Ratio basé sur le spin (existant)
         max_spin = 500.0
         ratio = min(1.0, abs(ball.angular_speed) / max_spin)
@@ -410,20 +375,20 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
         ball.vel[0] += abs(ball.angular_speed) * spin_factor * (ratio if signe_x else -ratio)
         ball.vel[1] += abs(ball.angular_speed) * spin_factor * (ratio) * (1 if signe_y else -1) # si dans le même sens alors on descend (positif) sinon on monte (negatif)
         
-        if est_mousse:
-            print(f"  [3] Après redistribution spin: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
+        # if est_mousse:
+        #    print(f"  [3] Après redistribution spin: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
 
         ball.angular_speed *= 0.8
 
         ball.vel[0], ball.vel[1] = reduction_speed(ball.vel[0], ball.vel[1], est_mousse)
         
-        if est_mousse:
-            print(f"  [4] Après réduction: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
+        # if est_mousse:
+        #    print(f"  [4] Après réduction: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
 
-    if est_mousse:
-        print("Après collision:")
-        print(f"{vel_x=}, {vel_y=}")
-        print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
+    # if est_mousse:
+    #     print("Après collision:")
+    #     print(f"{vel_x=}, {vel_y=}")
+    #     print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
 
 
 
@@ -465,8 +430,6 @@ def check_ball_paddle(ball, paddle, screen):
     
     # Si la position a changé, une collision a eu lieu
     if not np.array_equal(old_pos, ball.pos):
-        
-        print("="*70)
         paddle.can_hit = False  # La raquette ne peut plus toucher la balle
 
 

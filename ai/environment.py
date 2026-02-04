@@ -881,7 +881,7 @@ class PingPongEnv(gym.Env):
                 if self.render_mode == "human":
                     print("    ⚠️ WRONG DIRECTION HIT! Ball sent backwards!")
             else:
-                reward += (3.0 * self.coef_speed) / REWARD_SCALE # favorise une balle rapide
+                reward += (4.0 * self.coef_speed) / REWARD_SCALE # favorise une balle rapide
                 reward += (1.0 * self.coef_spin) / REWARD_SCALE # favorise une balle avec du spin
             
             agent_touch = self.ball.last_hit_by == ('left' if agent_is_left else 'right')
