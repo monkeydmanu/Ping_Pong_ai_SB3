@@ -123,7 +123,10 @@ def contact_cercle_rectangle(ball_center_x, ball_center_y, radius,
     rect_cy = rect_y + half_h   # centre du rectangle (y)
 
     # 1) conversion angle Pygame -> angle trigonométrique (0° = droite)
-    theta = np.radians(angle_deg)
+    # Pygame: Y+ = bas, 0° = haut (CCW)
+    # Trig:   Y+ = haut, 0° = droite (CCW)
+    # Conversion: angle_trig = 90 - angle_pygame
+    theta = np.radians(90 - angle_deg)
 
     # 2) translation balle -> repère centré sur rectangle
     dx = ball_center_x - rect_cx
@@ -302,6 +305,15 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
         x, y, width, height, angle, screen
     )
 
+    # hit              # bool - Y a-t-il collision? (cercle intersecte rectangle)
+    # contact          # (x, y) - Point de contact approximatif (coords monde)
+    # normal           # (nx, ny) - Vecteur normal UNITAIRE pointant vers l'extérieur
+    #                 #           (perpendiculaire à la surface)
+    # tangent          # (tx, ty) - Vecteur tangent UNITAIRE (direction de la surface)
+    # face             # str - Quel côté du rectangle? 
+    #                 #       'haut', 'bas', 'gauche', 'droite', 'corner_hg', 'corner_hd', 'corner_bg', 'corner_bd'
+    # corner_ratio     # float [0, 1] - Distance normalisée au coin (0=centre face, 1=coin exact)
+
     if not hit:
         return
 
@@ -321,7 +333,6 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
     ball.pos[1] = contact[1] + normal[1] * ball.radius
 
     if face and face.startswith('corner_'):
-        # Ancienne logique coin
         ratio = corner_ratio if corner_ratio is not None else 0.0
         transfer = ratio * ball.vel[1]
 
@@ -350,6 +361,10 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
         v_dot_n = ball.vel[0]*normal[0] + ball.vel[1]*normal[1]
         ball.vel[0] -= 2 * v_dot_n * normal[0]
         ball.vel[1] -= 2 * v_dot_n * normal[1]
+        
+        if est_mousse:
+            print(f"  [1] Après réflexion: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
+            print(f"face={face}")
 
         # === TRANSFERT VITESSE RAQUETTE → BALLE (seulement pour la mousse/raquette) ===
         if est_mousse:
@@ -359,6 +374,9 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
             # Ajouter la vitesse de la raquette à la balle
             ball.vel[0] += vel_x * velocity_transfer
             ball.vel[1] += vel_y * velocity_transfer
+            
+            if est_mousse:
+                print(f"  [2] Après transfert raquette: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
             
             # === GÉNÉRATION DE SPIN BASÉE SUR OÙ ON TAPE LA BALLE ===
             # Vecteur du centre de la balle vers le point de contact
@@ -391,10 +409,16 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
         # Redistribution de l'énergie
         ball.vel[0] += abs(ball.angular_speed) * spin_factor * (ratio if signe_x else -ratio)
         ball.vel[1] += abs(ball.angular_speed) * spin_factor * (ratio) * (1 if signe_y else -1) # si dans le même sens alors on descend (positif) sinon on monte (negatif)
+        
+        if est_mousse:
+            print(f"  [3] Après redistribution spin: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
 
         ball.angular_speed *= 0.8
 
         ball.vel[0], ball.vel[1] = reduction_speed(ball.vel[0], ball.vel[1], est_mousse)
+        
+        if est_mousse:
+            print(f"  [4] Après réduction: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
 
     if est_mousse:
         print("Après collision:")

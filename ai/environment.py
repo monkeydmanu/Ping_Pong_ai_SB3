@@ -10,7 +10,7 @@ import numpy as np
 import pygame
 
 from config import (
-    WIDTH, HEIGHT, FPS, TABLE_Y, PIXELS_PER_METER,
+    NET_HEIGHT_PX, NET_WIDTH_PX, WIDTH, HEIGHT, FPS, TABLE_Y, PIXELS_PER_METER,
     RACKET_WIDTH_PX, RACKET_HEIGHT_PX, TABLE_WIDTH_PX,
     ADAPTIVE_BOUNDARY_OFFSET, OUT_MARGIN
 )
@@ -144,6 +144,7 @@ class PingPongEnv(gym.Env):
         # Flags pour les récompenses (éviter les doublons)
         self.bounce_reward_given = False
         self.proximity_reward_given = False
+        self.height_reward_given = False
         self.fault_volley = False
         self.opponent_fault_volley = False
         self.double_hit_fault = False
@@ -291,6 +292,7 @@ class PingPongEnv(gym.Env):
         # Reset des flags de récompenses
         self.bounce_reward_given = False # flag temporaire qui s'active et se désactive la balle touche la table adverse, pour donner une récompense une seule fois
         self.proximity_reward_given = False
+        self.height_reward_given = False
         self.fault_volley = False # touche la balle en volée
         self.opponent_fault_volley = False # l'adversaire touche la balle en volée
         self.double_hit_fault = False
@@ -323,7 +325,6 @@ class PingPongEnv(gym.Env):
 
         # affichage vel joueur droite
         #print(f"Vel joueur droite dans step(): {self.opponent_paddle.vel}")
-
         self.steps += 1
         self.point_winner_side = None  # reset du vainqueur pour ce step
         agent_is_left = (self.agent_side == "left")
@@ -515,6 +516,7 @@ class PingPongEnv(gym.Env):
                     if ball_hit_agent:
                         self.bounce_reward_given = False
                         self.proximity_reward_given = False
+                        self.height_reward_given = False
                         agent_paddle_side = 'left' if self.agent_side == 'left' else 'right'
                         
                         # Sauvegarder qui a frappé avant (pour détecter volley)
@@ -880,27 +882,34 @@ class PingPongEnv(gym.Env):
                     print("    ⚠️ WRONG DIRECTION HIT! Ball sent backwards!")
             else:
                 reward += (3.0 * self.coef_speed) / REWARD_SCALE # favorise une balle rapide
-                reward += (2.0 * self.coef_spin) / REWARD_SCALE # favorise une balle avec du spin
+                reward += (1.0 * self.coef_spin) / REWARD_SCALE # favorise une balle avec du spin
             
-
+            agent_touch = self.ball.last_hit_by == ('left' if agent_is_left else 'right')
             
             # Mettre la balle chez l'adversaire (rebond valide) : C'est très bien
             ball_bounces_opponent = info.get('ball_bounces_opponent', 0)
-            agent_hits = info.get('agent_hits', 0)
             table_cross_proximity = info.get('table_cross_proximity')
             
-            if agent_hits > 0 and ball_bounces_opponent > 0:
+            if agent_touch and ball_bounces_opponent > 0:
                 if not self.bounce_reward_given:
                     reward += 8.0 / REWARD_SCALE  # = 0.4 (envoie un signal fort)
                     self.bounce_reward_given = True
-            elif agent_hits > 0 and table_cross_proximity is not None:
+            elif agent_touch and table_cross_proximity is not None:
                 if not self.proximity_reward_given:
                     # Proximité du rebond adverse même si pas de rebond valide
                     #print('='*70)
                     #print(f"Table cross proximity: {table_cross_proximity}")
-                    reward += (5.0 * table_cross_proximity) / REWARD_SCALE  # 0..0.5
+                    reward += (4.0 * table_cross_proximity) / REWARD_SCALE  # 0..0.5
                     self.proximity_reward_given = True
-        
+
+            if not self.height_reward_given and agent_touch and ((NET_WIDTH_PX + WIDTH//2 + 5) < self.ball.pos[0] < (NET_WIDTH_PX + WIDTH//2 + 10)):
+                self.height_reward_given = True
+                # je veux un coef qui vaut 1 si c'est pile à 5 pixels au dessus du filet et qui réduit dès que ça monte et qui vaut 0 à y = 0
+                target_y = TABLE_Y
+                distance_to_target = self.ball.pos[1] - target_y  # négatif si trop haut
+                coef_height = max(0.0, min(1.0, -distance_to_target / (HEIGHT//2)))                
+                reward += (2.0 * (1 - coef_height)) / REWARD_SCALE  # = 0.2 pour encourager les balles basses au filet
+            
         # Accumuler les rewards intermédiaires
         self.episode_reward_accumulation += reward
         
