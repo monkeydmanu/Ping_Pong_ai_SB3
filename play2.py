@@ -129,7 +129,8 @@ def play_ai_vs_ai(model_path: str = DEFAULT_MODEL_PATH, num_episodes: int = 5, v
 
             # IA droite (opponent_paddle)
             if vs_trained and model_right is not None:
-                action_p2 = predict_action(model_right, obs, deterministic=True)
+                opponent_obs = game.env.get_opponent_observation()
+                action_p2 = predict_action(model_right, opponent_obs, deterministic=True)
             else:
                 action_p2 = game.env._get_opponent_action()
 
@@ -228,7 +229,8 @@ def play_ai_vs_human(model_path: str = DEFAULT_MODEL_PATH, mouse: bool = False, 
         else:
             # IA contrôle joueur 2 (droite) => action_p2
             action_p1 = game.action_p1  # humain gauche
-            action_p2 = predict_action(model_ai, obs, deterministic=True)
+            opponent_obs = game.env.get_opponent_observation()
+            action_p2 = predict_action(model_ai, opponent_obs, deterministic=True)
 
         # affichage vel joueur gauche avant step
         #print(f"Vel joueur gauche avant step: {game.env.agent_paddle.vel}")
@@ -293,10 +295,10 @@ if __name__ == "__main__":
 
 
 # # IA vs Humain, humain à droite à la souris
-# python play2.py --mode ai_vs_human --mouse --mouse-side right --model_path models_sb3/best/modele_1/best_model.zip
+# python play2.py --mode ai_vs_human --mouse --mouse-side right --model_path models_sb3/ppo_pingpong_modele_1_final.zip
 
 # # IA vs Humain, humain à gauche à la souris
-# python play2.py --mode ai_vs_human --mouse --mouse-side left --model_path models_sb3/best/modele_1/best_model.zip
+# python play2.py --mode ai_vs_human --mouse --mouse-side left --model_path models_sb3/ppo_pingpong_modele_1_final.zip
 
 # # Humain vs Humain, droite à la souris
 # python play2.py --mode human --mouse --mouse-side right

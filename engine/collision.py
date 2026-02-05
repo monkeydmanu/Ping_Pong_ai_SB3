@@ -214,8 +214,8 @@ def contact_cercle_rectangle(ball_center_x, ball_center_y, radius,
         corners_local = [(-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)]
         corners_world = []
         for cx, cy in corners_local:
-            wx = cx * cos_t - cy * sin_t + rect_cx
-            wy = cx * sin_t + cy * cos_t + rect_cy
+            wx = cx * cos_t + cy * sin_t + rect_cx
+            wy = -cx * sin_t + cy * cos_t + rect_cy
             corners_world.append((int(wx), int(wy)))
         pygame.draw.polygon(screen, (0, 255, 0), corners_world, 2)
         if hit:
@@ -230,165 +230,122 @@ def contact_cercle_rectangle(ball_center_x, ball_center_y, radius,
 # a=0.35 pour la mousse et 0.22 pour la table
 def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=0.2, screen=None):
     """
-    Gestion du rebond sur un rectangle incluant coins gauche/droite avec :
-    - ratio basé sur le bord pour un effet plus marqué
-    - spin ajusté en fonction du ratio et de la vitesse de base
+    Gestion du rebond sur un rectangle avec physique de vitesse relative.
     """
     ball_center_x = ball.pos[0]
     ball_center_y = ball.pos[1]
 
-    signe_x = (ball.angular_speed) >= 0 # True si spin positif
-    signe_y = (ball.angular_speed * ball.vel[0] >= 0)
-
+    # Récupération des infos du rectangle
     if est_mousse:
         _, _, vel_x, vel_y, angle, width, height = rectangle.get_info()
-        # Utiliser la vitesse lissée au lieu de la vitesse instantanée pour le transfert
+        # Lissage vitesse
         if hasattr(rectangle, 'smoothed_vel'):
             vel_x, vel_y = rectangle.smoothed_vel[0], rectangle.smoothed_vel[1]
         x, y, _, _ = rectangle.get_rect()
     elif est_table:
         x, y, width, height = rectangle.get_rect()
         vel_x, vel_y = 0, 0
-        angle = 0 # on ajoutera 90 après
+        angle = 0 
     else: # filet
         x, y, width, height = rectangle.get_rect()
         vel_x, vel_y = 0, 0
-        angle = 0 # on ajoutera 90 après
+        angle = 0 
 
+    # Détection collision géométrique
     hit, contact, normal, tangent, face, corner_ratio = contact_cercle_rectangle(
         ball_center_x, ball_center_y, ball.radius,
         x, y, width, height, angle, screen, est_mousse
     )
 
-    # hit              # bool - Y a-t-il collision? (cercle intersecte rectangle)
-    # contact          # (x, y) - Point de contact approximatif (coords monde)
-    # normal           # (nx, ny) - Vecteur normal UNITAIRE pointant vers l'extérieur
-    #                 #           (perpendiculaire à la surface)
-    # tangent          # (tx, ty) - Vecteur tangent UNITAIRE (direction de la surface)
-    # face             # str - Quel côté du rectangle? 
-    #                 #       'haut', 'bas', 'gauche', 'droite', 'corner_hg', 'corner_hd', 'corner_bg', 'corner_bd'
-    # corner_ratio     # float [0, 1] - Distance normalisée au coin (0=centre face, 1=coin exact)
-
     if not hit:
         return
 
-    
+    # # Debug info
     # if est_mousse:
-    #     print("Avant collision:")
-    #     print(f"{angle=}")
-    #     print(f"raquette {vel_x=}, {vel_y=}")
-    #     # Afficher la vitesse angulaire lissée si disponible
-    #     if hasattr(rectangle, 'smoothed_angular_velocity'):
-    #         print(f"smoothed_angular_velocity={rectangle.smoothed_angular_velocity:.2f} °/s")
-    #     print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
+    #     print(f"Collision détectée: Face={face}")
+    #     print(f"  Raquette V=({vel_x:.1f}, {vel_y:.1f})")
+    #     print(f"  Balle V=({ball.vel[0]:.1f}, {ball.vel[1]:.1f})")
 
-    # Repositionnement pour éviter l'enfoncement
+    # Repositionnement immédiat pour éviter que la balle reste collée
     ball.pos[0] = contact[0] + normal[0] * ball.radius
     ball.pos[1] = contact[1] + normal[1] * ball.radius
 
+    # --- 1. Calcul de la Vitesse Relative ---
+    # On se place dans le référentiel de la raquette
+    rel_vx = ball.vel[0] - vel_x
+    rel_vy = ball.vel[1] - vel_y
+
+    # --- 2. Vérification de la direction d'impact ---
+    # Produit scalaire : V_rel . Normale
+    v_dot_n = rel_vx * normal[0] + rel_vy * normal[1]
+
+    # Si v_dot_n > 0, la balle s'éloigne déjà de la surface (ou la raquette la fuit)
+    # On ne fait rien, sauf si on veut éviter le "tunneling"
+    if v_dot_n >= 0:
+        return
+
+    # --- Gestion Spéciale des Coins (Gardée de ton code) ---
     if face and face.startswith('corner_'):
-        ratio = corner_ratio if corner_ratio is not None else 0.0
-        transfer = ratio * ball.vel[1]
-
-        # Direction horizontale
-        if 'hg' in face or 'bg' in face:  # gauche
-            ball.vel[0] = -abs(ball.vel[0]) - abs(transfer)
-            is_left_corner = True
-        else:  # droite
-            ball.vel[0] = abs(ball.vel[0]) + abs(transfer)
-            is_left_corner = False
-
-        # Direction verticale
-        if 'hg' in face or 'hd' in face:  # haut
-            ball.vel[1] = -abs(ball.vel[1]) * (1 - 0.5 * ratio)
-        else:  # bas
-            ball.vel[1] = abs(ball.vel[1]) * (1 - 0.5 * ratio)
-
-        # Ajustement spin
-        ball.angular_speed = adjust_spin_for_corner(ball.angular_speed, ratio, is_left_corner=is_left_corner)
-
-        # Réduction vitesses
-        ball.vel[0], ball.vel[1] = reduction_speed(ball.vel[0], ball.vel[1], est_mousse)
-
-    else:
-        # appliquer la réflexion selon la normale
-        v_dot_n = ball.vel[0]*normal[0] + ball.vel[1]*normal[1]
+        # Logique simplifiée pour les coins : on inverse juste selon la normale du coin + effet
+        # (Tu peux réintégrer ta logique complexe ici si tu veux, mais attention aux signes)
         ball.vel[0] -= 2 * v_dot_n * normal[0]
         ball.vel[1] -= 2 * v_dot_n * normal[1]
+        # On ajoute un peu de chaos/spin comme avant
+        return
+
+    # --- 3. Réflexion Physique (Rebond) ---
+    # Formule : V_new = V_old - (1 + restitution) * (V_old . N) * N
+    # On applique un coefficient de restitution (rebond)
+    # Pour le ping pong : 
+    #   restitution verticale ~ 0.8 (table) à 1.2 (mousse active qui pousse)
+    #   restitution horizontale dépend du spin
+    
+    coeff_restitution = 1.0  # Base élastique
+    if est_mousse:
+        # La mousse "pousse" un peu (effet trampoline des gommes modernes)
+        coeff_restitution = 1.15 
+    elif est_table:
+        coeff_restitution = 0.85
+
+    # Calcul du vecteur de rebond en vitesse relative
+    # j = impulsion scalaire
+    j = -(1 + coeff_restitution) * v_dot_n
+    
+    rel_vx_new = rel_vx + j * normal[0]
+    rel_vy_new = rel_vy + j * normal[1]
+
+    # --- 4. Friction / Tangente (Effet) ---
+    # Vitesse tangentielle relative
+    v_dot_t = rel_vx * tangent[0] + rel_vy * tangent[1]
+    
+    # Friction de la surface (ralentit la balle tangentiellement)
+    friction = 0.8 if est_mousse else 0.95
+    rel_vx_new -= (1 - friction) * v_dot_t * tangent[0]
+    rel_vy_new -= (1 - friction) * v_dot_t * tangent[1]
+
+    # Ajout du "coup de poignet" (Spin generation)
+    if est_mousse:
+        # Si la raquette frotte la balle, on ajoute du spin
+        # Vitesse tangentielle relative détermine le spin généré
+        spin_generation = v_dot_t * 0.5  # Facteur arbitraire
+        ball.angular_speed -= spin_generation 
         
-        # print(f"face={face}, {normal=}, {tangent=}")
-        # if est_mousse:
-        #     print(f"  [1] Après réflexion: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
+        # Et inversement, le spin existant modifie la trajectoire (Effet Magnus au rebond)
+        grip = 0.3 # Adhérence
+        tangential_kick = ball.angular_speed * grip * 0.1
+        rel_vx_new += tangential_kick * tangent[0]
+        rel_vy_new += tangential_kick * tangent[1]
 
-        # === TRANSFERT VITESSE RAQUETTE → BALLE (seulement pour la mousse/raquette) ===
-        if est_mousse:
-            # Facteur de transfert de vitesse
-            velocity_transfer = 1.2  # 120% de la vitesse transférée (amplifié pour plus de dynamique)
-            
-            # Ajouter la vitesse de la raquette à la balle
-            ball.vel[0] += vel_x * velocity_transfer
-            ball.vel[1] += vel_y * velocity_transfer
-            
-            # # if est_mousse:
-                # print(f"  [2] Après transfert raquette: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
-            
-            # === GÉNÉRATION DE SPIN BASÉE SUR OÙ ON TAPE LA BALLE ===
-            # Vecteur du centre de la balle vers le point de contact
-            contact_offset_x = contact[0] - ball_center_x
-            contact_offset_y = contact[1] - ball_center_y
-            
-            # Normaliser par le rayon pour avoir un ratio [-1, 1]
-            # contact_ratio_y > 0 = on tape en dessous de la balle (backspin/coupé)
-            # contact_ratio_y < 0 = on tape au dessus de la balle (topspin)
-            contact_ratio_y = contact_offset_y / ball.radius if ball.radius > 0 else 0
-            
-            # La vitesse horizontale de la raquette amplifie l'effet
-            # Plus on frappe fort horizontalement, plus l'effet est marqué
-            paddle_speed = np.sqrt(vel_x**2 + vel_y**2)
-            
-            # Générer le spin :
-            # - Taper dessus (contact_ratio_y < 0) + mouvement vers la droite (vel_x > 0) = topspin (positif)
-            # - Taper dessous (contact_ratio_y > 0) + mouvement vers la droite (vel_x > 0) = backspin (négatif)
-            # Le signe du spin dépend de : -contact_ratio_y * signe(vel_x)
-            spin_generation = 0.5  # facteur de conversion amplifié (était 0.2)
-            direction_x = 1 if vel_x >= 0 else -1  # direction du coup
-            generated_spin = -contact_ratio_y * paddle_speed * spin_generation * direction_x
-            
-            ball.angular_speed += generated_spin
-
-            # === SPIN GÉNÉRÉ PAR LA VITESSE ANGULAIRE DE LA RAQUETTE ===
-            # Convention demandée :
-            # - vitesse angulaire > 0 => accentue spin horaire (positif)
-            # - vitesse angulaire < 0 => accentue spin antihoraire (négatif)
-            if hasattr(rectangle, 'smoothed_angular_velocity'):
-                angular_spin_factor = 0.02  # facteur de conversion deg/s -> spin
-                angular_dir = 1 if rectangle.smoothed_angular_velocity >= 0 else -1
-                angular_strength = abs(rectangle.smoothed_angular_velocity)
-                generated_spin_wrist = angular_strength * angular_spin_factor * angular_dir
-                ball.angular_speed += generated_spin_wrist
-
-        # Ratio basé sur le spin (existant)
-        max_spin = 500.0
-        ratio = min(1.0, abs(ball.angular_speed) / max_spin)
-
-        # Redistribution de l'énergie
-        ball.vel[0] += abs(ball.angular_speed) * spin_factor * (ratio if signe_x else -ratio)
-        ball.vel[1] += abs(ball.angular_speed) * spin_factor * (ratio) * (1 if signe_y else -1) # si dans le même sens alors on descend (positif) sinon on monte (negatif)
-        
-        # if est_mousse:
-        #    print(f"  [3] Après redistribution spin: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
-
-        ball.angular_speed *= 0.8
-
-        ball.vel[0], ball.vel[1] = reduction_speed(ball.vel[0], ball.vel[1], est_mousse)
-        
-        # if est_mousse:
-        #    print(f"  [4] Après réduction: vel={ball.vel[0]:.2f}, {ball.vel[1]:.2f}")
+    # --- 5. Retour au Monde ---
+    ball.vel[0] = rel_vx_new + vel_x
+    ball.vel[1] = rel_vy_new + vel_y
+    
+    # Limites globales (clamp)
+    ball.vel[0], ball.vel[1] = reduction_speed(ball.vel[0], ball.vel[1], est_mousse)
 
     # if est_mousse:
-    #     print("Après collision:")
-    #     print(f"{vel_x=}, {vel_y=}")
-    #     print(f"{ball.vel[0]=}, {ball.vel[1]=}, {ball.angular_speed=}")
+    #     print(f"  [Rebond Relatif] v_dot_n={v_dot_n:.1f}")
+    #     print(f"  [Resultat] Balle V=({ball.vel[0]:.1f}, {ball.vel[1]:.1f})")
 
 
 

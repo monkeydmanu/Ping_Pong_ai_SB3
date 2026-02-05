@@ -76,95 +76,63 @@ class Ball:
         self.angular_speed *= (1 - 0.1 * dt_scaled)  # ~10% par seconde
 
 
-def spawn_ball_left(table, game_mode=False, train_phase=0):
-    """Crée une balle au bord gauche de la table (service gauche)."""
+def _spawn_ball_static(table, side, game_mode=False):
+    """Crée une balle immobile pour un service (vx=0)."""
     x_table, y_table, w_table, h_table = table.get_rect()
 
-    if game_mode:
-        ball = Ball(
-        x=x_table + 70,  # Bord gauche de la table # + 30
-        y=y_table - 300,  # Au-dessus de la table
+    x_offset = 70 if game_mode else random.randint(50, 200)
+    y_offset = 300
+
+    x = x_table + x_offset if side == "left" else x_table + w_table - x_offset
+    y = y_table - y_offset
+
+    return Ball(
+        x=x,
+        y=y,
         vx=0,
         vy=0,
         angular_speed=0
     )
-    else:
-        ball = Ball(
-                x=x_table + random.randint(50, 200),  # Bord gauche de la table # + 150, v2 : random.randint(50, 200)
-                y=y_table - 300,  # Au-dessus de la table
-                vx=0,
-                vy=0,
-                angular_speed=0
-            )
-        # if train_phase == 0:
-        #     ball = Ball(
-        #         x=x_table + 150,  # Bord gauche de la table # + 30
-        #         y=y_table - 220,  # Au-dessus de la table
-        #         vx=0,
-        #         vy=0,
-        #         angular_speed=0
-        #     )
-        # elif train_phase == 1:
-        #     ball = Ball(
-        #         x=x_table + 80,  # Bord gauche de la table # + 30
-        #         y=y_table - 300,  # Au-dessus de la table
-        #         vx=0,
-        #         vy=0,
-        #         angular_speed=0
-        #     )
-        # else:
-        #     ball = Ball(
-        #         x=x_table + 30,  # Bord gauche de la table # + 30
-        #         y=y_table - 300,  # Au-dessus de la table
-        #         vx=0,
-        #         vy=0,
-        #         angular_speed=0
-        #     )
 
+
+def spawn_ball_left(table, game_mode=False, train_phase=0):
+    """Crée une balle au bord gauche de la table (service gauche)."""
+    ball = _spawn_ball_static(table, "left", game_mode=game_mode)
     ball.service = 'left'  # Service depuis la gauche
-
     return ball
 
 
 def spawn_ball_right(table, game_mode=False, train_phase=0):
     """Crée une balle au bord droit de la table (service droite)."""
-    x_table, y_table, w_table, h_table = table.get_rect()
-
-    if game_mode:
-        ball = Ball(
-        x=x_table + w_table - 70,  # Bord droit de la table
-        y=y_table - 300,  # Au-dessus de la table
-        vx=0,
-        vy=0,
-        angular_speed=0
-    )
-    else:
-        #if train_phase == 0:
-        ball = Ball(
-            x=x_table + w_table - 200,  # Bord droit de la table # - 60, v2 : -200
-            y=y_table - 250,  # Au-dessus de la table random.randint(150, 400)
-            vx=random.randint(-600, -300), # random.randint(-800, -500), v2 : random.randint(-600, -300)
-            vy=random.randint(-300, -250), # random.randint(-400, -300), v2 : random.randint(-300, -250)
-            angular_speed=random.randint(-100, 100) #random.randint(-300, 300) pour les mins et max pour que ça fasse un rebond correct mais (-100, 100) pour apprendre
-        )
-        # elif train_phase == 1:
-        #     ball = Ball(
-        #         x=x_table + w_table - 80,  # Bord droit de la table
-        #         y=y_table - 300,  # Au-dessus de la table
-        #         vx=0,
-        #         vy=0,
-        #         angular_speed=0
-        #     )
-        # else:
-        #     ball = Ball(
-        #         x=x_table + w_table - 30,  # Bord droit de la table
-        #         y=y_table - 300,  # Au-dessus de la table
-        #         vx=0,
-        #         vy=0,
-        #         angular_speed=0
-        #     )
+    ball = _spawn_ball_static(table, "right", game_mode=game_mode)
 
     if game_mode: # pour que ball.service = None en mode entrainement car sinon service_faut tjs True
         ball.service = 'right'  # Service depuis la droite
 
     return ball
+
+
+def spawn_ball_right_to_left(table):
+    """Crée une balle côté droit avec vitesse vers la gauche (entrainement)."""
+    x_table, y_table, w_table, h_table = table.get_rect()
+
+    return Ball(
+        x=x_table + w_table - 200,
+        y=y_table - 250,
+        vx=random.randint(-600, -300),
+        vy=random.randint(-300, -250),
+        angular_speed=random.randint(-100, 100)
+    )
+
+
+def spawn_ball_left_to_right(table):
+    """Crée une balle côté gauche avec vitesse vers la droite (entrainement)."""
+    x_table, y_table, w_table, h_table = table.get_rect()
+
+    return Ball(
+        x=x_table + 200,
+        y=y_table - 250,
+        vx=random.randint(300, 600),
+        vy=random.randint(-300, -250),
+        angular_speed=random.randint(-100, 100)
+    )

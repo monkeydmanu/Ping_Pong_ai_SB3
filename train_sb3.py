@@ -133,6 +133,48 @@ def _save_episode_count(monitor_dir: str, episode_count: int) -> None:
         print(f"⚠️  Erreur lors de la sauvegarde de episode_count.txt : {e}")
 
 
+def _unwrap_env(env):
+    while hasattr(env, "env"):
+        env = env.env
+    return env
+
+
+def _apply_to_base_envs(env, fn):
+    if hasattr(env, "envs"):
+        for sub_env in env.envs:
+            fn(_unwrap_env(sub_env))
+    else:
+        fn(_unwrap_env(env))
+
+
+def _set_self_play(env, model, deterministic=False):
+    # On définit la logique directement pour chaque instance d'environnement
+    def set_on_env(base_env):
+        # Cette fonction capture 'base_env' et sera appelée à chaque step par l'environnement
+        def opponent_policy(obs):
+            # 1. Prédiction (Le modèle pense toujours jouer à GAUCHE)
+            action, _ = model.predict(obs, deterministic=deterministic)
+            
+            # 2. Inversion DYNAMIQUE selon le côté de l'adversaire
+            # Si l'agent est à GAUCHE, l'adversaire est à DROITE -> Il faut inverser l'action (Miroir)
+            # Si l'agent est à DROITE, l'adversaire est à GAUCHE -> L'action est déjà bonne (Directe)
+            if base_env.agent_side == "left":
+                # L'adversaire est à droite : on inverse X et la Rotation
+                opp_action = action.copy()
+                opp_action[0] = -opp_action[0]  # Inversion X (Gauche <-> Droite)
+                opp_action[2] = -opp_action[2]  # Inversion Rotation (Horaire <-> Anti-horaire)
+                return opp_action
+            else:
+                # L'adversaire est à gauche : on applique l'action telle quelle
+                return action
+
+        # On injecte cette policy intelligente dans l'environnement
+        if hasattr(base_env, "set_opponent_policy"):
+            base_env.set_opponent_policy(opponent_policy)
+
+    _apply_to_base_envs(env, set_on_env)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Entraînement PPO avec SB3')
     parser.add_argument('--timesteps', type=int, default=100000, 
@@ -163,6 +205,12 @@ def main():
                         help='Coefficient d\'entropie (exploration)')
     parser.add_argument('--log-name', type=str, default=None,
                         help='Nom de la run TensorBoard (ignoré si on charge un modèle)')
+    parser.add_argument('--random-side', action='store_true',
+                        help='Alterner aléatoirement le côté agent à chaque épisode')
+    parser.add_argument('--self-play', action='store_true',
+                        help='Utiliser la policy courante pour l\'adversaire (self-play)')
+    parser.add_argument('--self-play-deterministic', action='store_true',
+                        help='Forcer l\'adversaire en mode deterministic')
     
     args = parser.parse_args()
     
@@ -227,7 +275,7 @@ def main():
         shutil.copyfile(monitor_file, backup_monitor_file)
 
     render_mode = "human" if args.render else None
-    env = PingPongEnv(render_mode=render_mode, agent_side="left", static_spawn=False, game_mode=False)
+    env = PingPongEnv(render_mode=render_mode, agent_side="left", static_spawn=False, game_mode=False, randomize_agent_side=args.random_side)
 
     # Initialiser l'environnement avec le bon compteur d'épisodes dès le début
     if start_episode_count > 0:
@@ -358,8 +406,13 @@ def main():
     )
     
     # Environnement d'évaluation (sans render) - Toujours en phase finale (game_mode=True)
-    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False, game_mode=False), 
+    eval_env = Monitor(PingPongEnv(render_mode=None, agent_side="left", static_spawn=False, game_mode=False, randomize_agent_side=args.random_side), 
                        eval_log_path)
+    
+    if args.self_play:
+        print("✅ Self-play activé sur l'environnement d'évaluation")
+        # On force le mode déterministe pour l'évaluation pour des résultats stables
+        _set_self_play(eval_env, model, deterministic=True)
     
     eval_callback = EvalCallback(
         eval_env,
@@ -373,6 +426,11 @@ def main():
     
     callbacks = [curriculum_callback, checkpoint_callback, eval_callback]
     
+    # === SELF-PLAY (optionnel) ===
+    if args.self_play:
+        _set_self_play(model.get_env(), model, deterministic=args.self_play_deterministic)
+        print("✅ Self-play activé : l'adversaire utilise la policy courante")
+
     # === ENTRAÎNEMENT ===
     print("\n🚀 Début de l'entraînement")
     print("="*70)
@@ -418,15 +476,16 @@ if __name__ == "__main__":
     main()
 
 # Creer un nouveau modèle:
-# python train_sb3.py --log-name nom_modele_sans_guillemets --timesteps 200000
+# python train_sb3.py --log-name modele_1 --timesteps 200000 --random-side --self-play
 
-# pour continuer l'entraînement à partir du modèle final:
-# python train_sb3.py --load models_sb3/ppo_pingpong_final.zip --timesteps 100000
+# Continuer l'entraînement à partir du modèle final:
+# python train_sb3.py --load models_sb3/ppo_pingpong_modele_1_final.zip --timesteps 1000000 --render --random-side --self-play
 
 # Continuer l'entraînement à partir du meilleur modèle:
-# python train_sb3.py --load models_sb3/best/best_model.zip --timesteps 100000
+# python train_sb3.py --load models_sb3/best/best_model.zip --timesteps 100000 --random-side --self-play
 
 # checkpoint spécifique:
-# python train_sb3.py --load models_sb3/checkpoints/ppo_pingpong_50000_steps.zip --timesteps 100000
+# python train_sb3.py --load models_sb3/checkpoints/ppo_pingpong_50000_steps.zip --timesteps 100000 --random-side --self-play
 
+# tensorboard:
 # tensorboard --logdir=./logs_sb3/tensorboard/
