@@ -303,7 +303,7 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
     coeff_restitution = 1.0  # Base élastique
     if est_mousse:
         # La mousse "pousse" un peu (effet trampoline des gommes modernes)
-        coeff_restitution = 1.15 
+        coeff_restitution = 0.85
     elif est_table:
         coeff_restitution = 0.85
 

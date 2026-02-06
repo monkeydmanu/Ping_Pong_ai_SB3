@@ -124,6 +124,29 @@ def spawn_ball_right_to_left(table):
         angular_speed=random.randint(-100, 100)
     )
 
+def spawn_ball_right_to_left_defense(table):
+    """Crée une balle côté droit avec vitesse vers la gauche (entrainement)."""
+    x_table, y_table, w_table, h_table = table.get_rect()
+
+    prob = random.randint(1, 2) # soit 1 soit 2 pour faire varier les trajectoires entre rapide et lent
+
+    if prob == 1:
+        return Ball(
+            x=x_table + w_table - 300,
+            y=y_table - 100,
+            vx= random.randint(-800, -500), #random.randint(-800, -500)
+            vy= random.randint(-100, 1500), #random.randint(-100, 1500)
+            angular_speed=random.randint(-300, 300) #random.randint(-300, 300)
+        )
+    else: # balle lente pour amortir
+        return Ball(
+            x=x_table + w_table - 250,
+            y=y_table - 100,
+            vx= random.randint(-400, -200), #random.randint(-400, -200)
+            vy= random.randint(-1000, -200), #random.randint(-1000, -200)
+            angular_speed= random.randint(-300, 300) #random.randint(-300, 300)
+        )
+
 
 def spawn_ball_left_to_right(table):
     """Crée une balle côté gauche avec vitesse vers la droite (entrainement)."""
@@ -136,3 +159,26 @@ def spawn_ball_left_to_right(table):
         vy=random.randint(-300, -250),
         angular_speed=random.randint(-100, 100)
     )
+
+def spawn_ball_left_to_right_defense(table):
+    """Crée une balle côté gauche avec vitesse vers la droite (entrainement)."""
+    x_table, y_table, w_table, h_table = table.get_rect()
+
+    prob = random.randint(1, 2) # soit 1 soit 2 pour faire varier les trajectoires entre rapide et lent
+    
+    if prob == 1:
+        return Ball(
+            x=x_table + 300,
+            y=y_table - 100,
+            vx= random.randint(500, 800), #random.randint(-800, -500)
+            vy= random.randint(-100, 1500), #random.randint(-100, 1500)
+            angular_speed=random.randint(-300, 300) #random.randint(-300, 300)
+        )
+    else: # balle lente pour amortir
+        return Ball(
+            x=x_table + 250,
+            y=y_table - 100,
+            vx= random.randint(200, 400), #random.randint(-400, -200)
+            vy= random.randint(-1000, -200), #random.randint(-1000, -200)
+            angular_speed= random.randint(-300, 300) #random.randint(-300, 300)
+        )

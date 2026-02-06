@@ -14,7 +14,7 @@ from config import (
     RACKET_WIDTH_PX, RACKET_HEIGHT_PX, TABLE_WIDTH_PX,
     ADAPTIVE_BOUNDARY_OFFSET, OUT_MARGIN
 )
-from core.ball import Ball, spawn_ball_left, spawn_ball_right, spawn_ball_left_to_right, spawn_ball_right_to_left
+from core.ball import Ball, spawn_ball_left, spawn_ball_right, spawn_ball_left_to_right, spawn_ball_right_to_left, spawn_ball_right_to_left_defense, spawn_ball_left_to_right_defense
 from core.paddle import Paddle
 from core.net import Net
 from core.table import Table
@@ -167,6 +167,7 @@ class PingPongEnv(gym.Env):
         self.episode_reward_accumulation = 0.0
         self.coef_speed = 0.0
         self.coef_spin = 0.0
+        self.rally_count = 0
 
         # Proximité du passage de balle à TABLE_Y (après frappe agent)
         self.table_cross_proximity = None
@@ -206,7 +207,7 @@ class PingPongEnv(gym.Env):
         super().reset(seed=seed)
 
         if self.randomize_agent_side:
-            self.agent_side = "left" if self.np_random.random() < 1 else "right"
+            self.agent_side = "left" if self.np_random.random() < 0.5 else "right"
         
         # Créer les objets du jeu
         self.table = Table()
@@ -267,26 +268,35 @@ class PingPongEnv(gym.Env):
                 spawn_debug_label = "service_right_static"
         else:
             prob = random.randint(1, 10)  # de 1 à 10 (inclus)
+
             if self.agent_side == "left":
-                if prob <= 4:  # 40% spawn côté gauche sans vx
+                if prob <= 2:  # 20% spawn côté gauche sans vx
                     self.ball = spawn_ball_left(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
                     self.agent_paddle.pos[0] = 150
                     self.agent_paddle.pos[1] = TABLE_Y - 150
                     spawn_debug_label = "left_static"
-                else:  # 60% balle qui vient de la droite
+                elif prob <= 4:  # 20% balle qui vient de la droite
                     self.ball = spawn_ball_right_to_left(self.table)
                     self.ball.service = None
                     self.ball.last_hit_by = "right"
                     spawn_debug_label = "right_to_left"
+                else :
+                    self.ball = spawn_ball_right_to_left_defense(self.table)
+                    self.ball.service = None
+                    self.ball.last_hit_by = "right"
             else:
-                if prob <= 4:  # 40% spawn côté droite sans vx
+                if prob <= 2:  # 20% spawn côté droite sans vx
                     self.ball = spawn_ball_right(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
                     spawn_debug_label = "right_static"
-                else:  # 60% balle qui vient de la gauche
+                elif prob <= 4:  # 20% balle qui vient de la gauche
                     self.ball = spawn_ball_left_to_right(self.table)
                     self.ball.service = None
                     self.ball.last_hit_by = "left"
                     spawn_debug_label = "left_to_right"
+                else :
+                    self.ball = spawn_ball_left_to_right_defense(self.table)
+                    self.ball.service = None
+                    self.ball.last_hit_by = "left"
 
         if self.debug_spawn:
             print(f"[spawn] agent_side={self.agent_side} type={spawn_debug_label} pos=({self.ball.pos[0]:.1f},{self.ball.pos[1]:.1f}) vel=({self.ball.vel[0]:.1f},{self.ball.vel[1]:.1f})")
@@ -328,6 +338,7 @@ class PingPongEnv(gym.Env):
         self.point_winner_side = None
         self.coef_speed = 0.0
         self.coef_spin = 0.0
+        self.rally_count = 0
         
         observation = self._get_observation()
         info = {}
@@ -359,7 +370,14 @@ class PingPongEnv(gym.Env):
         self.coef_spin = 0.0
         
         # === Appliquer l'action de l'agent ===
-        self._apply_action(self.agent_paddle, action)
+        # L'observation est miroir quand l'agent est a droite, donc on miroite aussi l'action.
+        actual_agent_action = action
+        if self.agent_side == "right":
+            # Copie pour ne pas modifier l'action originale
+            actual_agent_action = np.array(action, dtype=np.float32).copy()
+            actual_agent_action[0] = -actual_agent_action[0]  # Inversion X
+            actual_agent_action[2] = -actual_agent_action[2]  # Inversion rotation
+        self._apply_action(self.agent_paddle, actual_agent_action)
         
         # === Appliquer l'action de l'adversaire ===
         if opponent_action is None:
@@ -543,6 +561,7 @@ class PingPongEnv(gym.Env):
                 if self.agent_paddle.can_hit:
                     ball_hit_agent = self._check_paddle_collision(self.agent_paddle, "agent")
                     if ball_hit_agent:
+                        self.rally_count += 1
                         self.bounce_reward_given = False
                         self.proximity_reward_given = False
                         self.height_reward_given = False
@@ -604,6 +623,7 @@ class PingPongEnv(gym.Env):
                 if self.opponent_paddle.can_hit:
                     ball_hit_opponent = self._check_paddle_collision(self.opponent_paddle, "opponent")
                     if ball_hit_opponent:
+                        self.rally_count += 1
 
                         opponent_paddle_side = 'right' if self.agent_side == 'left' else 'left'
                         
@@ -920,16 +940,18 @@ class PingPongEnv(gym.Env):
                 if our_bounces_at_hit == 1:
                     # EXCELLENT : frappe après 1 rebond
                     reward += 4.0 / REWARD_SCALE  # = 0.2 (5 * moins que la victoire)
+                    rally_bonus = min(self.rally_count, 10) * 0.5
+                    reward += rally_bonus / REWARD_SCALE
                     self.pending_hit_reward = False
             
             # PÉNALITÉ DIRECTION INCORRECTE : Frapper vers son propre camp (comportement très mauvais)
             if self.pending_wrong_direction:
-                reward -= 8.0 / REWARD_SCALE  # = -0.8 (pénalité FORTE - presque aussi grave qu'une défaite)
+                reward -= 3.0 / REWARD_SCALE  # = -0.8 (pénalité FORTE - presque aussi grave qu'une défaite)
                 self.pending_wrong_direction = False  # Consommer le flag (une seule fois par frappe)
                 if self.render_mode == "human":
                     print("    ⚠️ WRONG DIRECTION HIT! Ball sent backwards!")
             else:
-                reward += (4.0 * self.coef_speed) / REWARD_SCALE # favorise une balle rapide
+                reward += (2.0 * self.coef_speed) / REWARD_SCALE # favorise une balle rapide
                 reward += (1.0 * self.coef_spin) / REWARD_SCALE # favorise une balle avec du spin
             
             agent_touch = self.ball.last_hit_by == ('left' if agent_is_left else 'right')
@@ -940,7 +962,7 @@ class PingPongEnv(gym.Env):
             
             if agent_touch and ball_bounces_opponent > 0:
                 if not self.bounce_reward_given:
-                    reward += 6.0 / REWARD_SCALE  # = 0.4 (envoie un signal fort)
+                    reward += 6.0 / REWARD_SCALE  # = 0.6 (envoie un signal fort)
                     self.bounce_reward_given = True
             elif agent_touch and table_cross_proximity is not None:
                 if not self.proximity_reward_given:
@@ -1142,7 +1164,7 @@ class PingPongEnv(gym.Env):
             ball_idx = self._position_to_grid_index(view_ball_x, view_ball_y)
             
             # Vitesse balle
-            max_vel = 1000.0
+            max_vel = 1500.0
             continuous[0] = np.clip(view_ball_vx / max_vel, -1, 1)
             continuous[1] = np.clip(view_ball_vy / max_vel, -1, 1)
             
@@ -1174,7 +1196,7 @@ class PingPongEnv(gym.Env):
             continuous[11] = np.clip(((view_ball_y - view_paddle_y) / (HEIGHT / 2.0)), -1.0, 1.0)
             
             # Vitesse relative
-            max_vel = 1000.0
+            max_vel = 1500.0
             vel_rel_x = view_ball_vx - view_paddle_vx
             vel_rel_y = view_ball_vy - view_paddle_vy
             continuous[14] = np.clip(vel_rel_x / max_vel, -1, 1)
@@ -1191,7 +1213,7 @@ class PingPongEnv(gym.Env):
         paddle_idx = self._position_to_grid_index(view_paddle_x, view_paddle_y)
         
         # Vitesse Raquette
-        max_paddle_vel = 500.0
+        max_paddle_vel = 1000.0
         continuous[3] = np.clip(view_paddle_vx / max_paddle_vel, -1, 1)
         continuous[4] = np.clip(view_paddle_vy / max_paddle_vel, -1, 1)
         
