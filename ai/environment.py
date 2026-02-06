@@ -657,9 +657,9 @@ class PingPongEnv(gym.Env):
                     max_distance = WIDTH / 2
                     if self.ball.pos[0] < (WIDTH / 2):
                         #print("gauche")
-                        self.table_cross_proximity = max(0.8, 1 - (abs(((WIDTH / 2) - self.ball.pos[0])) / max_distance)) # 0.8 si proche 0 si loin
+                        self.table_cross_proximity = max(0.0, 1 - (abs(((WIDTH / 2) - self.ball.pos[0])) / max_distance))
                     elif self.ball.pos[0] > (self.table.x + TABLE_WIDTH_PX):
-                        self.table_cross_proximity = max(0.8, 1 - (abs((self.table.x + TABLE_WIDTH_PX - self.ball.pos[0])) / max_distance)) # 0.8 si proche 0 si loin
+                        self.table_cross_proximity = max(0.0, 1 - (abs((self.table.x + TABLE_WIDTH_PX - self.ball.pos[0])) / max_distance))
                     else:
                         self.table_cross_proximity = 1.0
                 elif self.ball.last_hit_by == agent_paddle_side and not agent_is_left:
@@ -667,9 +667,9 @@ class PingPongEnv(gym.Env):
                     max_distance = WIDTH / 2
                     if self.ball.pos[0] > (WIDTH / 2):
                         #print("gauche")
-                        self.table_cross_proximity = max(0.8, 1 - (abs(((WIDTH / 2) - self.ball.pos[0])) / max_distance)) # 0.8 si proche 0 si loin
+                        self.table_cross_proximity = max(0.0, 1 - (abs(((WIDTH / 2) - self.ball.pos[0])) / max_distance))
                     elif self.ball.pos[0] < (self.table.x):
-                        self.table_cross_proximity = max(0.8, 1 - (abs((self.table.x - self.ball.pos[0])) / max_distance)) # 0.8 si proche 0 si loin
+                        self.table_cross_proximity = max(0.0, 1 - (abs((self.table.x - self.ball.pos[0])) / max_distance))
                     else:
                         self.table_cross_proximity = 1.0
 
@@ -867,10 +867,13 @@ class PingPongEnv(gym.Env):
             if agent_wins:
                 # Doit être > (Hit + Bounce + Shaping accumulé)
                 reward = 10.0 / REWARD_SCALE  # = 1.0
+                reward += min(self.rally_count, 10) * 0.01
                 log_msg = "🟢 WIN"
             else:
                 # La défaite doit faire mal pour motiver la défense (symétrique avec victoire)
-                reward = -10.0 / REWARD_SCALE  # = -1.0 (équilibré avec victoire)
+                base_penalty = -10.0
+                mitigation = min(self.rally_count, 10) * 0.5
+                reward = (base_penalty + mitigation) / REWARD_SCALE
                 if faults.get('double_bounce_left', False):
                     reward -= 1.0 / REWARD_SCALE  # -0.1 extra
                 log_msg = "🔴 LOSS"
@@ -938,20 +941,20 @@ class PingPongEnv(gym.Env):
                 our_bounces_at_hit = self.ball.bounces_left if agent_is_left else self.ball.bounces_right
                 
                 if our_bounces_at_hit == 1:
-                    # EXCELLENT : frappe après 1 rebond
-                    reward += 4.0 / REWARD_SCALE  # = 0.2 (5 * moins que la victoire)
-                    rally_bonus = min(self.rally_count, 10) * 0.5
-                    reward += rally_bonus / REWARD_SCALE
-                    self.pending_hit_reward = False
+                    base_hit_reward = 1.0
+                    combo_bonus = min(self.rally_count, 10) * 0.1
+                    final_hit_reward = base_hit_reward + combo_bonus
+                    reward += final_hit_reward / REWARD_SCALE
+                self.pending_hit_reward = False
             
             # PÉNALITÉ DIRECTION INCORRECTE : Frapper vers son propre camp (comportement très mauvais)
             if self.pending_wrong_direction:
-                reward -= 3.0 / REWARD_SCALE  # = -0.8 (pénalité FORTE - presque aussi grave qu'une défaite)
+                reward -= 3.0 / REWARD_SCALE
                 self.pending_wrong_direction = False  # Consommer le flag (une seule fois par frappe)
                 if self.render_mode == "human":
                     print("    ⚠️ WRONG DIRECTION HIT! Ball sent backwards!")
             else:
-                reward += (2.0 * self.coef_speed) / REWARD_SCALE # favorise une balle rapide
+                reward += (1.0 * self.coef_speed) / REWARD_SCALE
                 reward += (1.0 * self.coef_spin) / REWARD_SCALE # favorise une balle avec du spin
             
             agent_touch = self.ball.last_hit_by == ('left' if agent_is_left else 'right')
@@ -962,7 +965,7 @@ class PingPongEnv(gym.Env):
             
             if agent_touch and ball_bounces_opponent > 0:
                 if not self.bounce_reward_given:
-                    reward += 6.0 / REWARD_SCALE  # = 0.6 (envoie un signal fort)
+                    reward += 3.0 / REWARD_SCALE
                     self.bounce_reward_given = True
             elif agent_touch and table_cross_proximity is not None:
                 if not self.proximity_reward_given:
@@ -979,6 +982,18 @@ class PingPongEnv(gym.Env):
                 distance_to_target = self.ball.pos[1] - target_y  # négatif si trop haut
                 coef_height = max(0.0, min(1.0, -distance_to_target / (HEIGHT//2)))                
                 reward += (2.0 * (1 - coef_height)) / REWARD_SCALE  # = 0.2 pour encourager les balles basses au filet
+
+            # Repositionnement: quand la balle est chez l'adversaire
+            if self.ball_in_play and not ball_on_agent_side:
+                target_y = HEIGHT / 2
+                target_x = 150 if agent_is_left else WIDTH - 150
+                agent_x = self.agent_paddle.pos[0] + self.agent_paddle.width / 2
+                agent_y = self.agent_paddle.pos[1] + self.agent_paddle.height / 2
+                dist_to_home = np.sqrt((agent_x - target_x) ** 2 + (agent_y - target_y) ** 2)
+                if dist_to_home < 100:
+                    reward += 0.005 / REWARD_SCALE
+                else:
+                    reward += 0.001 / REWARD_SCALE
             
         # Accumuler les rewards intermédiaires
         self.episode_reward_accumulation += reward
