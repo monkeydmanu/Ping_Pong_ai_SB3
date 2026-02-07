@@ -207,7 +207,7 @@ class PingPongEnv(gym.Env):
         super().reset(seed=seed)
 
         if self.randomize_agent_side:
-            self.agent_side = "left" if self.np_random.random() < 0.5 else "right"
+            self.agent_side = "left" if self.np_random.random() < 1 else "right"
         
         # Créer les objets du jeu
         self.table = Table()
@@ -270,12 +270,12 @@ class PingPongEnv(gym.Env):
             prob = random.randint(1, 10)  # de 1 à 10 (inclus)
 
             if self.agent_side == "left":
-                if prob <= 2:  # 20% spawn côté gauche sans vx
+                if prob <= 3:  # 20% spawn côté gauche sans vx
                     self.ball = spawn_ball_left(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
                     self.agent_paddle.pos[0] = 150
                     self.agent_paddle.pos[1] = TABLE_Y - 150
                     spawn_debug_label = "left_static"
-                elif prob <= 4:  # 20% balle qui vient de la droite
+                elif prob <= 7:  # 20% balle qui vient de la droite
                     self.ball = spawn_ball_right_to_left(self.table)
                     self.ball.service = None
                     self.ball.last_hit_by = "right"
@@ -285,10 +285,10 @@ class PingPongEnv(gym.Env):
                     self.ball.service = None
                     self.ball.last_hit_by = "right"
             else:
-                if prob <= 2:  # 20% spawn côté droite sans vx
+                if prob <= 3:  # 20% spawn côté droite sans vx
                     self.ball = spawn_ball_right(self.table, game_mode=self.game_mode, train_phase=self.training_phase)
                     spawn_debug_label = "right_static"
-                elif prob <= 4:  # 20% balle qui vient de la gauche
+                elif prob <= 7:  # 20% balle qui vient de la gauche
                     self.ball = spawn_ball_left_to_right(self.table)
                     self.ball.service = None
                     self.ball.last_hit_by = "left"
@@ -911,7 +911,7 @@ class PingPongEnv(gym.Env):
                     improvement = self.prev_dist_to_ball - dist_to_ball
                     # On récompense uniquement si on se rapproche
                     if improvement > 0:
-                        reward += (improvement * 0.005) / REWARD_SCALE  # Augmenté de 0.003 -> 0.005
+                        reward += (improvement * 0.002) / REWARD_SCALE  # Augmenté de 0.003 -> 0.005
                 self.prev_dist_to_ball = dist_to_ball
             else:
                 # Tant que la balle n'a pas rebondi chez nous, on ne guide pas l'approche
@@ -931,7 +931,7 @@ class PingPongEnv(gym.Env):
                 alignment = vel_norm_x * dir_to_ball_x + vel_norm_y * dir_to_ball_y
                 
                 if alignment > 0.5:  # Seuil modéré pour permettre l'apprentissage précoce
-                    reward += (0.01 * alignment) / REWARD_SCALE  # Réduit de 0.02 -> 0.01
+                    reward += (0.008 * alignment) / REWARD_SCALE
 
             # === 3. ÉVÉNEMENTS CLÉS (Jalons) ===
             # Ces récompenses doivent être significatives mais inférieures à la Victoire
@@ -941,8 +941,8 @@ class PingPongEnv(gym.Env):
                 our_bounces_at_hit = self.ball.bounces_left if agent_is_left else self.ball.bounces_right
                 
                 if our_bounces_at_hit == 1:
-                    base_hit_reward = 1.0
-                    combo_bonus = min(self.rally_count, 10) * 0.1
+                    base_hit_reward = 2.0
+                    combo_bonus = min(self.rally_count, 10) * 0.2
                     final_hit_reward = base_hit_reward + combo_bonus
                     reward += final_hit_reward / REWARD_SCALE
                 self.pending_hit_reward = False
@@ -965,14 +965,27 @@ class PingPongEnv(gym.Env):
             
             if agent_touch and ball_bounces_opponent > 0:
                 if not self.bounce_reward_given:
-                    reward += 3.0 / REWARD_SCALE
+                    # ASTUCE : Si c'est le début de l'échange (rally_count faible), on paie BIEN.
+                    # Si l'échange s'éternise, on paie moins pour forcer à conclure.
+                    
+                    if self.rally_count < 2:
+                        # Premier renvoi : CRITIQUE. On donne 1.0 (comme une victoire)
+                        # pour être SÛR qu'elle apprenne à renvoyer.
+                        reward += 10.0 / REWARD_SCALE  # = 1.0
+                    elif self.rally_count < 5:
+                        # Échanges suivants : On donne 0.5
+                        reward += 5.0 / REWARD_SCALE   # = 0.5
+                    else:
+                        # Rallye long : On donne 0.2 pour maintenir en vie, mais il faut gagner.
+                        reward += 2.0 / REWARD_SCALE   # = 0.2
+                    
                     self.bounce_reward_given = True
             elif agent_touch and table_cross_proximity is not None:
                 if not self.proximity_reward_given:
                     # Proximité du rebond adverse même si pas de rebond valide
                     #print('='*70)
                     #print(f"Table cross proximity: {table_cross_proximity}")
-                    reward += (2.0 * table_cross_proximity) / REWARD_SCALE  # 0..0.5
+                    reward += (table_cross_proximity) / REWARD_SCALE  # 0..0.5
                     self.proximity_reward_given = True
 
             if not self.height_reward_given and agent_touch and ((NET_WIDTH_PX + WIDTH//2 + 5) < self.ball.pos[0] < (NET_WIDTH_PX + WIDTH//2 + 10)):
@@ -991,9 +1004,9 @@ class PingPongEnv(gym.Env):
                 agent_y = self.agent_paddle.pos[1] + self.agent_paddle.height / 2
                 dist_to_home = np.sqrt((agent_x - target_x) ** 2 + (agent_y - target_y) ** 2)
                 if dist_to_home < 100:
-                    reward += 0.005 / REWARD_SCALE
+                    reward += 0.0005 / REWARD_SCALE
                 else:
-                    reward += 0.001 / REWARD_SCALE
+                    reward += 0.0001 / REWARD_SCALE
             
         # Accumuler les rewards intermédiaires
         self.episode_reward_accumulation += reward

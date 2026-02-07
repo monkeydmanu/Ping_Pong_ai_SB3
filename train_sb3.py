@@ -179,7 +179,7 @@ def main():
     parser = argparse.ArgumentParser(description='Entraînement PPO avec SB3')
     parser.add_argument('--timesteps', type=int, default=100000, 
                         help='Nombre total de timesteps d\'entraînement')
-    parser.add_argument('--save-freq', type=int, default=20000,
+    parser.add_argument('--save-freq', type=int, default=100000,
                         help='Fréquence de sauvegarde (en timesteps)')
     parser.add_argument('--load', type=str, default=None,
                         help='Chemin vers un modèle à charger pour continuer l\'entraînement')
@@ -189,11 +189,11 @@ def main():
                         help='Vérifier que l\'environnement est compatible SB3')
     parser.add_argument('--embed-dim', type=int, default=16,
                         help='Dimension des embeddings spatiaux')
-    parser.add_argument('--learning-rate', type=float, default=5e-5,
+    parser.add_argument('--learning-rate', type=float, default=3e-5,
                         help='Learning rate pour PPO')
-    parser.add_argument('--n-steps', type=int, default=2048,
+    parser.add_argument('--n-steps', type=int, default=4096,
                         help='Nombre de steps avant chaque update')
-    parser.add_argument('--batch-size', type=int, default=128,
+    parser.add_argument('--batch-size', type=int, default=512,
                         help='Taille des mini-batches')
     parser.add_argument('--n-epochs', type=int, default=5,
                         help='Nombre d\'epochs par update')
