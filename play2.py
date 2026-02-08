@@ -63,12 +63,23 @@ def load_best_model(model_path: str = DEFAULT_MODEL_PATH):
         return None
 
 
-def predict_action(model, observation, deterministic: bool = True):
+def predict_action(model, observation, deterministic: bool = True, noise_std: float = 0.0):
     """Prédit une action continue [-1,1]^3 avec le modèle SB3."""
     if model is None:
         return np.array([0.0, 0.0, 0.0], dtype=np.float32)
     action, _ = model.predict(observation, deterministic=deterministic)
+    if noise_std > 0.0:
+        noise = np.random.normal(0.0, noise_std, size=action.shape).astype(np.float32)
+        action = np.clip(action + noise, -1.0, 1.0)
     return action
+
+
+def unmirror_action(action: np.ndarray) -> np.ndarray:
+    """Inverse les axes pour appliquer une action vue côté droit dans le monde réel."""
+    mirrored = np.asarray(action, dtype=np.float32).copy()
+    mirrored[0] = -mirrored[0]
+    mirrored[2] = -mirrored[2]
+    return mirrored
 
 
 
@@ -80,7 +91,7 @@ def _update_ball_debug_info(game):
         game.last_spin = game.env.ball.angular_speed
 
 
-def play_ai_vs_ai(model_path: str = DEFAULT_MODEL_PATH, num_episodes: int = 5, vs_trained: bool = False):
+def play_ai_vs_ai(model_path: str = DEFAULT_MODEL_PATH, num_episodes: int = 5, vs_trained: bool = False, stochastic: bool = False, noise_std: float = 0.0):
     """IA vs IA avec affichage visuel (évaluation sans entraînement)."""
     # Importer Game uniquement quand nécessaire
     from engine.game import Game
@@ -125,12 +136,13 @@ def play_ai_vs_ai(model_path: str = DEFAULT_MODEL_PATH, num_episodes: int = 5, v
                 break
 
             # IA gauche (agent_paddle) - utilise le modèle entraîné
-            action_p1 = predict_action(model_left, obs, deterministic=True)
+            action_p1 = predict_action(model_left, obs, deterministic=not stochastic, noise_std=noise_std)
 
             # IA droite (opponent_paddle)
             if vs_trained and model_right is not None:
                 opponent_obs = game.env.get_opponent_observation()
-                action_p2 = predict_action(model_right, opponent_obs, deterministic=True)
+                action_p2 = predict_action(model_right, opponent_obs, deterministic=not stochastic, noise_std=noise_std)
+                action_p2 = unmirror_action(action_p2)
             else:
                 action_p2 = game.env._get_opponent_action()
 
@@ -185,7 +197,7 @@ def play_human_vs_human(mouse: bool = False, mouse_side: str = 'right'):
     print("Fin du jeu!")
 
 
-def play_ai_vs_human(model_path: str = DEFAULT_MODEL_PATH, mouse: bool = False, mouse_side: str = 'right'):
+def play_ai_vs_human(model_path: str = DEFAULT_MODEL_PATH, mouse: bool = False, mouse_side: str = 'right', stochastic: bool = False, noise_std: float = 0.0):
     """IA vs Joueur Humain avec affichage complet."""
     from engine.game import Game
 
@@ -224,13 +236,14 @@ def play_ai_vs_human(model_path: str = DEFAULT_MODEL_PATH, mouse: bool = False, 
 
         if human_on_right:
             # IA contrôle joueur 1 (gauche) => action_p1
-            action_p1 = predict_action(model_ai, obs, deterministic=True)
+            action_p1 = predict_action(model_ai, obs, deterministic=not stochastic, noise_std=noise_std)
             action_p2 = game.action_p2  # humain droite
         else:
             # IA contrôle joueur 2 (droite) => action_p2
             action_p1 = game.action_p1  # humain gauche
             opponent_obs = game.env.get_opponent_observation()
-            action_p2 = predict_action(model_ai, opponent_obs, deterministic=True)
+            action_p2 = predict_action(model_ai, opponent_obs, deterministic=not stochastic, noise_std=noise_std)
+            action_p2 = unmirror_action(action_p2)
 
         # affichage vel joueur gauche avant step
         #print(f"Vel joueur gauche avant step: {game.env.agent_paddle.vel}")
@@ -277,6 +290,10 @@ if __name__ == "__main__":
                         help='Chemin vers le meilleur modèle .zip SB3')
     parser.add_argument('--vs-trained', action='store_true',
                         help='En mode play (IA vs IA), utiliser le modèle entraîné pour les deux côtés')
+    parser.add_argument('--stochastic', action='store_true',
+                        help='Utiliser des actions non-déterministes (plus de variété)')
+    parser.add_argument('--noise-std', type=float, default=0.0,
+                        help='Bruit gaussien sur les actions (ex: 0.05)')
     parser.add_argument('--mouse', action='store_true',
                         help='Activer le contrôle à la souris pour un joueur')
     parser.add_argument('--mouse-side', type=str, choices=['left', 'right'], default='right',
@@ -285,11 +302,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if args.mode == 'play':
-        play_ai_vs_ai(model_path=args.model_path, num_episodes=args.episodes, vs_trained=args.vs_trained)
+        play_ai_vs_ai(model_path=args.model_path, num_episodes=args.episodes, vs_trained=args.vs_trained, stochastic=args.stochastic, noise_std=args.noise_std)
     elif args.mode == 'human':
         play_human_vs_human(mouse=args.mouse, mouse_side=args.mouse_side)
     elif args.mode == 'ai_vs_human':
-        play_ai_vs_human(model_path=args.model_path, mouse=args.mouse, mouse_side=args.mouse_side)
+        play_ai_vs_human(model_path=args.model_path, mouse=args.mouse, mouse_side=args.mouse_side, stochastic=args.stochastic, noise_std=args.noise_std)
 
 
 
@@ -302,3 +319,6 @@ if __name__ == "__main__":
 
 # # Humain vs Humain, droite à la souris
 # python play2.py --mode human --mouse --mouse-side right
+
+# ia vs ia, les deux côtés avec le modèle entraîné
+# python play2.py --mode play --model_path models_sb3/ppo_pingpong_modele_1_final.zip --episodes 100 --vs-trained --stochastic --noise-std 0.05

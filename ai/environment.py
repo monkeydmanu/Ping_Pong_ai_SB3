@@ -162,9 +162,18 @@ class PingPongEnv(gym.Env):
         
         # Tracking pour reward shaping (distance à la balle)
         self.prev_dist_to_ball = None
+        self.prev_dist_to_home = None
+
+        # Forcer un déplacement vers la gauche pendant un court délai (entraînement)
+        self.force_left_steps = 0
+
+        # Stats d'entraînement (mis a jour par callbacks)
+        self.last_num_timesteps = None
+        self.last_lr = None
         
         # Accumulation des rewards pour l'épisode
         self.episode_reward_accumulation = 0.0
+        self.episode_reposition_reward = 0.0
         self.coef_speed = 0.0
         self.coef_spin = 0.0
         self.rally_count = 0
@@ -214,7 +223,9 @@ class PingPongEnv(gym.Env):
         self.net = Net()
         net_center = WIDTH // 2
 
-        print(self.training_phase, self.episode_count)
+        steps_text = "n/a" if self.last_num_timesteps is None else f"{int(self.last_num_timesteps)}"
+        lr_text = "n/a" if self.last_lr is None else f"{self.last_lr:.2e}"
+        print(f"phase={self.training_phase} episode={self.episode_count} steps={steps_text} lr={lr_text}")
         if self.game_mode:
             # Mode jeu: positions fixes, pas de curriculum
             self._speed_factor = 1.0
@@ -317,12 +328,15 @@ class PingPongEnv(gym.Env):
         
         # Reset de l'accumulation des rewards pour ce nouvel épisode
         self.episode_reward_accumulation = 0.0
+        self.episode_reposition_reward = 0.0
 
         # Reset de la proximité du passage de balle à TABLE_Y
         self.table_cross_proximity = None
         
         # Reset du tracking de distance pour reward shaping
         self.prev_dist_to_ball = None
+        self.prev_dist_to_home = None
+        self.force_left_steps = 0
         
         # Reset des flags de récompenses
         self.bounce_reward_given = False # flag temporaire qui s'active et se désactive la balle touche la table adverse, pour donner une récompense une seule fois
@@ -377,6 +391,9 @@ class PingPongEnv(gym.Env):
             actual_agent_action = np.array(action, dtype=np.float32).copy()
             actual_agent_action[0] = -actual_agent_action[0]  # Inversion X
             actual_agent_action[2] = -actual_agent_action[2]  # Inversion rotation
+        if not self.game_mode and self.force_left_steps > 0:
+            actual_agent_action[0] = -1.0 if self.agent_side == "left" else 1.0
+            self.force_left_steps -= 1
         self._apply_action(self.agent_paddle, actual_agent_action)
         
         # === Appliquer l'action de l'adversaire ===
@@ -537,8 +554,9 @@ class PingPongEnv(gym.Env):
                 
                 # Si la balle change de côté
                 if self.ball_side is not None and current_side != self.ball_side:
+                    if not self.game_mode and current_side != self.agent_side:
+                        self.force_left_steps = 50
 
-                    
                     server_side = self.ball.service
                     if server_side == 'left' and current_side == 'right':
                         if self.ball.bounces_left != 1:
@@ -1003,13 +1021,32 @@ class PingPongEnv(gym.Env):
                 agent_x = self.agent_paddle.pos[0] + self.agent_paddle.width / 2
                 agent_y = self.agent_paddle.pos[1] + self.agent_paddle.height / 2
                 dist_to_home = np.sqrt((agent_x - target_x) ** 2 + (agent_y - target_y) ** 2)
+                step_reposition_reward = 0.0
+                if self.prev_dist_to_home is not None:
+                    improvement = self.prev_dist_to_home - dist_to_home
+                    if improvement > 0:
+                        step_reposition_reward = (improvement * 0.01) / REWARD_SCALE # 0.002 avant
+                        reward += step_reposition_reward
+                        self.episode_reposition_reward += step_reposition_reward
+                self.prev_dist_to_home = dist_to_home
+                # Penalite progressive si trop loin de la zone de repositionnement
+                max_home_dist = WIDTH / 2
+                dist_ratio = min(dist_to_home / max_home_dist, 1.0)
+                reposition_penalty = (0.003 * dist_ratio) / REWARD_SCALE
+                reward -= reposition_penalty
+                self.episode_reposition_reward -= reposition_penalty
+                # Bonus de maintien proche de la base
                 if dist_to_home < 100:
-                    reward += 0.0005 / REWARD_SCALE
-                else:
-                    reward += 0.0001 / REWARD_SCALE
+                    comfort_bonus = 0.001 / REWARD_SCALE
+                    reward += comfort_bonus
+                    self.episode_reposition_reward += comfort_bonus
+                #print(f"{reward = }, dist_to_home = {dist_to_home:.1f}")
+            else:
+                self.prev_dist_to_home = None
             
         # Accumuler les rewards intermédiaires
         self.episode_reward_accumulation += reward
+
         
         #print(f"Reward step: {reward:.3f}")
         return reward

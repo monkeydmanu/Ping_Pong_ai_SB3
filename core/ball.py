@@ -134,16 +134,16 @@ def spawn_ball_right_to_left_defense(table):
         return Ball(
             x=x_table + w_table - 300,
             y=y_table - 100,
-            vx= random.randint(-800, -500), #random.randint(-800, -500)
-            vy= random.randint(-100, 1500), #random.randint(-100, 1500)
+            vx= random.randint(-600, -500), #random.randint(-800, -500) c'est le min et max
+            vy= random.randint(-100, 800), #random.randint(-100, 1500)
             angular_speed=random.randint(-300, 300) #random.randint(-300, 300)
         )
     else: # balle lente pour amortir
         return Ball(
             x=x_table + w_table - 250,
             y=y_table - 100,
-            vx= random.randint(-400, -200), #random.randint(-400, -200)
-            vy= random.randint(-1000, -200), #random.randint(-1000, -200)
+            vx= random.randint(-400, -300), #random.randint(-400, -200)
+            vy= random.randint(-700, -300), #random.randint(-1000, -200)
             angular_speed= random.randint(-300, 300) #random.randint(-300, 300)
         )
 
@@ -170,15 +170,15 @@ def spawn_ball_left_to_right_defense(table):
         return Ball(
             x=x_table + 300,
             y=y_table - 100,
-            vx= random.randint(500, 800), #random.randint(-800, -500)
-            vy= random.randint(-100, 1500), #random.randint(-100, 1500)
+            vx= random.randint(500, 600), #random.randint(-800, -500)
+            vy= random.randint(-100, 800), #random.randint(-100, 1500)
             angular_speed=random.randint(-300, 300) #random.randint(-300, 300)
         )
     else: # balle lente pour amortir
         return Ball(
             x=x_table + 250,
             y=y_table - 100,
-            vx= random.randint(200, 400), #random.randint(-400, -200)
-            vy= random.randint(-1000, -200), #random.randint(-1000, -200)
+            vx= random.randint(300, 400), #random.randint(-400, -200)
+            vy= random.randint(-700, -300), #random.randint(-1000, -200)
             angular_speed= random.randint(-300, 300) #random.randint(-300, 300)
         )

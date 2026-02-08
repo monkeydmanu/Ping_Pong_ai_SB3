@@ -42,29 +42,58 @@ class CurriculumCallback(BaseCallback):
         if self.locals.get("dones") is not None:
             dones = self.locals["dones"]
             if any(dones):
+                lr_value = None
+                if self.model is not None and hasattr(self.model, "lr_schedule") and hasattr(self.model, "_current_progress_remaining"):
+                    lr_value = float(self.model.lr_schedule(self.model._current_progress_remaining))
+
                 self.episode_count += 1
 
                 # Mettre à jour la phase dans l'env
                 if hasattr(self.training_env, 'envs'):
                     # VecEnv
                     for env in self.training_env.envs:
-                        if hasattr(env, 'set_episode_count'):
-                            env.set_episode_count(self.episode_count)
+                        base_env = _unwrap_env(env)
+                        if hasattr(base_env, 'set_episode_count'):
+                            base_env.set_episode_count(self.episode_count)
+                        if self.model is not None:
+                            base_env.last_num_timesteps = int(self.model.num_timesteps)
+                            base_env.last_lr = lr_value
                 elif hasattr(self.training_env, 'set_episode_count'):
                     # Env simple
-                    self.training_env.set_episode_count(self.episode_count)
+                    base_env = _unwrap_env(self.training_env)
+                    base_env.set_episode_count(self.episode_count)
+                    if self.model is not None:
+                        base_env.last_num_timesteps = int(self.model.num_timesteps)
+                        base_env.last_lr = lr_value
 
                 # Sauvegarder dans episode_count.txt
                 if self.monitor_dir:
                     _save_episode_count(self.monitor_dir, self.episode_count)
+                    if self.model is not None:
+                        _save_timestep_count(self.monitor_dir, int(self.model.num_timesteps))
 
                 # Log TensorBoard
                 if self.model is not None and self.model.logger is not None:
                     self.model.logger.record("train/episode_count", float(self.episode_count))
+                    self.model.logger.record("train/num_timesteps", float(self.model.num_timesteps))
+                    if lr_value is not None:
+                        self.model.logger.record("train/learning_rate", lr_value)
 
-                if self.verbose > 0 and self.episode_count % 100 == 0:
-                    print(f"📊 Episode {self.episode_count}: Phase update")
+        return True
 
+
+class TimestepWriteCallback(BaseCallback):
+    """Sauvegarde les timesteps a intervalle fixe."""
+
+    def __init__(self, save_freq: int, monitor_dir: str = None, verbose: int = 0):
+        super(TimestepWriteCallback, self).__init__(verbose)
+        self.save_freq = max(1, int(save_freq))
+        self.monitor_dir = monitor_dir
+
+    def _on_step(self) -> bool:
+        if self.monitor_dir and self.model is not None:
+            if self.n_calls % self.save_freq == 0:
+                _save_timestep_count(self.monitor_dir, int(self.model.num_timesteps))
         return True
 
 
@@ -123,6 +152,26 @@ def _load_episode_count(monitor_dir: str) -> int:
         return 0
 
 
+def _load_timestep_count(monitor_dir: str) -> int:
+    """Retourne le nombre de timesteps en lisant timesteps.txt.
+
+    - Si le fichier n'existe pas -> 0
+    - Le fichier contient un seul nombre entier
+    """
+    timesteps_file = os.path.join(monitor_dir, "timesteps.txt")
+    if not os.path.isfile(timesteps_file):
+        return 0
+
+    try:
+        with open(timesteps_file, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        if content.isdigit():
+            return int(content)
+        return 0
+    except Exception:
+        return 0
+
+
 def _save_episode_count(monitor_dir: str, episode_count: int) -> None:
     """Sauvegarde le numéro d'épisode dans episode_count.txt."""
     try:
@@ -131,6 +180,16 @@ def _save_episode_count(monitor_dir: str, episode_count: int) -> None:
             f.write(str(episode_count))
     except Exception as e:
         print(f"⚠️  Erreur lors de la sauvegarde de episode_count.txt : {e}")
+
+
+def _save_timestep_count(monitor_dir: str, timesteps: int) -> None:
+    """Sauvegarde le nombre de timesteps dans timesteps.txt."""
+    try:
+        timesteps_file = os.path.join(monitor_dir, "timesteps.txt")
+        with open(timesteps_file, "w", encoding="utf-8") as f:
+            f.write(str(timesteps))
+    except Exception as e:
+        print(f"⚠️  Erreur lors de la sauvegarde de timesteps.txt : {e}")
 
 
 def _unwrap_env(env):
@@ -175,6 +234,27 @@ def _set_self_play(env, model, deterministic=False):
     _apply_to_base_envs(env, set_on_env)
 
 
+def _linear_schedule(initial_lr: float, final_lr: float, start_decay_frac: float, total_steps: int, start_steps: int):
+    """Linear schedule with a delay, based on total steps across runs."""
+    start_decay_frac = min(max(start_decay_frac, 0.0), 1.0)
+    total_steps = max(1, int(total_steps))
+    start_steps = max(0, int(start_steps))
+
+    def schedule(progress_remaining: float) -> float:
+        # progress_remaining: 1 -> 0 sur la duree de cette run
+        run_progress = 1.0 - progress_remaining
+        current_steps = start_steps + run_progress * total_steps
+        total_progress = min(max(current_steps / total_steps, 0.0), 1.0)
+
+        if total_progress < start_decay_frac:
+            return float(initial_lr)
+
+        decay_progress = (total_progress - start_decay_frac) / max(1e-8, 1.0 - start_decay_frac)
+        return float(initial_lr + (final_lr - initial_lr) * decay_progress)
+
+    return schedule
+
+
 def main():
     parser = argparse.ArgumentParser(description='Entraînement PPO avec SB3')
     parser.add_argument('--timesteps', type=int, default=100000, 
@@ -189,13 +269,20 @@ def main():
                         help='Vérifier que l\'environnement est compatible SB3')
     parser.add_argument('--embed-dim', type=int, default=16,
                         help='Dimension des embeddings spatiaux')
-    parser.add_argument('--learning-rate', type=float, default=3e-5,
+    parser.add_argument('--learning-rate', type=float, default=2e-5,
                         help='Learning rate pour PPO')
+    parser.add_argument('--final-learning-rate', type=float, default=None,
+                        help='Learning rate final pour un schedule lineaire')
+    parser.add_argument('--lr-decay-start', type=float, default=0.3,
+                        help='Fraction du training avant de commencer la decroissance (0-1)')
+    parser.add_argument('--lr-schedule', type=str, default='constant',
+                        choices=['constant', 'linear'],
+                        help='Type de schedule de learning rate')
     parser.add_argument('--n-steps', type=int, default=4096,
                         help='Nombre de steps avant chaque update')
-    parser.add_argument('--batch-size', type=int, default=512,
+    parser.add_argument('--batch-size', type=int, default=1024,
                         help='Taille des mini-batches')
-    parser.add_argument('--n-epochs', type=int, default=5,
+    parser.add_argument('--n-epochs', type=int, default=10,
                         help='Nombre d\'epochs par update')
     parser.add_argument('--gamma', type=float, default=0.995,
                         help='Discount factor')
@@ -213,6 +300,9 @@ def main():
                         help='Forcer l\'adversaire en mode deterministic')
     
     args = parser.parse_args()
+
+    if args.lr_schedule == 'linear' and args.final_learning_rate is None:
+        args.final_learning_rate = args.learning_rate
     
     # === DÉTERMINER LE LOG_NAME ===
     # Si on charge un modèle, extraire son log_name original du chemin
@@ -260,8 +350,11 @@ def main():
 
     # Reprendre le numéro d'épisode si on continue la même run (monitor.csv existant)
     start_episode_count = _load_episode_count(monitor_log_path)
+    start_timesteps = _load_timestep_count(monitor_log_path)
     print(f"ℹ️  Monitor utilisé : {monitor_log_path}")
     print(f"ℹ️  Épisodes déjà terminés (monitor.csv) : {start_episode_count}")
+    if start_timesteps > 0:
+        print(f"ℹ️  Timesteps déjà enregistrés : {start_timesteps}")
     if start_episode_count > 0:
         print(f"🔄 Reprise à l'épisode {start_episode_count}")
 
@@ -338,7 +431,10 @@ def main():
     
     print(f"  • Feature Extractor: HybridFeatureExtractor (embed_dim={args.embed_dim})")
     print(f"  • Architecture: pi=[256, 256], vf=[256, 256]")
-    print(f"  • Learning rate: {args.learning_rate}")
+    if args.lr_schedule == 'linear':
+        print(f"  • Learning rate: {args.learning_rate} -> {args.final_learning_rate} (linear, start={args.lr_decay_start})")
+    else:
+        print(f"  • Learning rate: {args.learning_rate}")
     print(f"  • n_steps: {args.n_steps}")
     print(f"  • batch_size: {args.batch_size}")
     print(f"  • n_epochs: {args.n_epochs}")
@@ -353,6 +449,12 @@ def main():
     
     from stable_baselines3.common.logger import configure
 
+    if args.lr_schedule == 'linear':
+        total_steps = start_timesteps + args.timesteps
+        lr_value = _linear_schedule(args.learning_rate, args.final_learning_rate, args.lr_decay_start, total_steps, start_timesteps)
+    else:
+        lr_value = args.learning_rate
+
     if args.load and os.path.exists(args.load):
         print(f"📂 Chargement du modèle depuis: {args.load}")
         if args.log_name:
@@ -361,10 +463,12 @@ def main():
             args.load,
             env=env,
             custom_objects={
-                "learning_rate": args.learning_rate,
+                "learning_rate": lr_value,
                 "policy_kwargs": policy_kwargs
             }
         )
+        if start_timesteps > 0 and model.num_timesteps < start_timesteps:
+            model.num_timesteps = start_timesteps
         print("✅ Modèle chargé avec succès!")
     else:
         if args.load:
@@ -373,7 +477,7 @@ def main():
             "MultiInputPolicy",  # OBLIGATOIRE pour Dict observation space
             env,
             policy_kwargs=policy_kwargs,
-            learning_rate=args.learning_rate,
+            learning_rate=lr_value,
             n_steps=args.n_steps,
             batch_size=args.batch_size,
             n_epochs=args.n_epochs,
@@ -424,7 +528,8 @@ def main():
         n_eval_episodes=30,
     )
     
-    callbacks = [curriculum_callback, checkpoint_callback, eval_callback]
+    timestep_write_callback = TimestepWriteCallback(save_freq=args.save_freq, monitor_dir=monitor_log_path, verbose=0)
+    callbacks = [curriculum_callback, timestep_write_callback, checkpoint_callback, eval_callback]
     
     # === SELF-PLAY (optionnel) ===
     if args.self_play:
@@ -475,17 +580,17 @@ if __name__ == "__main__":
     import torch as th
     main()
 
-# Creer un nouveau modèle:
-# python train_sb3.py --log-name modele_1 --timesteps 200000 --random-side --self-play
+# 1) Créer un nouveau modèle (LR démarre haut puis descend)
+#python train_sb3.py --log-name modele_1 --timesteps 2000000 --random-side --self-play --learning-rate 1e-4 --final-learning-rate 5e-6 --lr-schedule linear --lr-decay-start 0.4
 
-# Continuer l'entraînement à partir du modèle final:
-# python train_sb3.py --load models_sb3/ppo_pingpong_modele_1_final.zip --timesteps 1000000 --render --random-side --self-play
+# 2) Continuer depuis le modèle final
+#python train_sb3.py --load models_sb3/ppo_pingpong_modele_1_final.zip --timesteps 2000000 --random-side --self-play --learning-rate 1e-4 --final-learning-rate 5e-6 --lr-schedule linear --lr-decay-start 0.4
 
-# Continuer l'entraînement à partir du meilleur modèle:
-# python train_sb3.py --load models_sb3/best/best_model.zip --timesteps 100000 --random-side --self-play
+# 3) Continuer depuis le meilleur modèle
+#python train_sb3.py --load models_sb3/best/best_model.zip --timesteps 2000000 --random-side --self-play --learning-rate 1e-4 --final-learning-rate 5e-6 --lr-schedule linear --lr-decay-start 0.4
 
-# checkpoint spécifique:
-# python train_sb3.py --load models_sb3/checkpoints/ppo_pingpong_50000_steps.zip --timesteps 100000 --random-side --self-play
+# 4) Continuer depuis un checkpoint précis
+#python train_sb3.py --load models_sb3/checkpoints/ppo_pingpong_50000_steps.zip --timesteps 2000000 --random-side --self-play --learning-rate 1e-4 --final-learning-rate 5e-6 --lr-schedule linear --lr-decay-start 0.4
 
 # tensorboard:
 # tensorboard --logdir=./logs_sb3/tensorboard/
