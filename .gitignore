@@ -1,2 +1,6 @@
 logs_sb3/
 models_sb3/
+ai/__pycache__/
+core/__pycache__/
+engine/__pycache__/
+graphics/__pycache__/
