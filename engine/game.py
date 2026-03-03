@@ -11,7 +11,14 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import pygame
 import numpy as np
 from config import WIDTH, HEIGHT, FPS
-from graphics.renderer import draw_background, draw_table, draw_ball, draw_paddle, draw_net
+from graphics.renderer import (
+    draw_background,
+    draw_table,
+    draw_ball,
+    draw_paddle,
+    draw_paddle_contact_normal,
+    draw_net,
+)
 from ai.environment import PingPongEnv
 
 
@@ -292,6 +299,8 @@ class Game:
         # Dessiner les raquettes
         draw_paddle(self.screen, self.env.agent_paddle, (255, 0, 0))
         draw_paddle(self.screen, self.env.opponent_paddle, (0, 0, 0))
+        # draw_paddle_contact_normal(self.screen, self.env.agent_paddle)
+        # draw_paddle_contact_normal(self.screen, self.env.opponent_paddle)
         
         # Dessiner le filet
         draw_net(self.screen, self.env.net)

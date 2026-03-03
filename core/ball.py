@@ -43,18 +43,36 @@ class Ball:
         speed_px = np.linalg.norm(self.vel)
         
         if speed_px > 1.0:  # éviter division par zéro
-            # === EFFET MAGNUS (simplifié pour le jeu) ===
-            magnus_strength = 0.5  # ajustable pour plus/moins d'effet
+            # === EFFET MAGNUS (force proportionnelle à vitesse × spin) ===
+            # Principe physique : F_magnus ∝ v × ω (produit vectoriel)
+            # Plus la balle va vite, plus l'effet est fort
+            # Plus le spin est élevé, plus l'effet est fort
+            # 
+            # Pour une balle au ping-pong :
+            # - angular_speed > 0 = topspin (rotation avant)
+            # - angular_speed < 0 = backspin (rotation arrière)
+            #
+            # Avec topspin et balle allant vers la droite :
+            # → La force pousse vers le BAS (la balle plonge)
+            # Avec backspin et balle allant vers la droite :
+            # → La force pousse vers le HAUT (la balle flotte)
             
-            # Topspin (angular_speed > 0 avec vel[0] > 0) → force vers le bas (+y)
-            if self.vel[0] != 0:
-                magnus_accel_y = magnus_strength * self.angular_speed * np.sign(self.vel[0])
-                self.vel[1] += magnus_accel_y * dt_scaled
+            # Coefficient Magnus ajustable (plus petit = effet plus subtil)
+            magnus_coefficient = 0.0003  # Ajusté pour être proportionnel à vitesse × spin
             
-            # Composante horizontale (plus faible)
-            if self.vel[1] != 0:
-                magnus_accel_x = -magnus_strength * 0.3 * self.angular_speed * np.sign(self.vel[1])
-                self.vel[0] += magnus_accel_x * dt_scaled
+            # Direction normalisée de la vitesse
+            vel_x_norm = self.vel[0] / speed_px
+            vel_y_norm = self.vel[1] / speed_px
+            
+            # Force Magnus perpendiculaire à la vitesse, proportionnelle à v × ω
+            # (rotation du vecteur vitesse de 90° dans le sens du spin)
+            magnus_factor = self.angular_speed * speed_px * magnus_coefficient
+            magnus_accel_x = -vel_y_norm * magnus_factor
+            magnus_accel_y = vel_x_norm * magnus_factor
+            
+            # Application de la force (accélération proportionnelle à vitesse)
+            self.vel[0] += magnus_accel_x * dt_scaled
+            self.vel[1] += magnus_accel_y * dt_scaled
             
             # === TRAÎNÉE AÉRODYNAMIQUE (légère) ===
             drag_factor = 0.5  # par seconde

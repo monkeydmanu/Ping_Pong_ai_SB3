@@ -1,14 +1,3 @@
-"""
-Script d'entraînement PPO pour Ping-Pong.
-Style Phil's code - simple et efficace.
-
-Usage:
-    python train.py                      # Entraînement (1000 épisodes)
-    python train.py --render             # Avec affichage
-    python train.py --mode play          # Jouer avec un modèle entraîné
-    python train.py --episodes 500       # Nombre d'épisodes personnalisé
-"""
-
 import os
 import argparse
 import numpy as np
@@ -33,17 +22,17 @@ def load_training_state(checkpoint_dir):
     checkpoint_file = os.path.join(checkpoint_dir, 'training_state.pkl')
     
     if not os.path.exists(checkpoint_file):
-        print(f"⚠️  Aucun état d'entraînement trouvé: {checkpoint_file}")
+        print(f"Aucun état d'entraînement trouvé: {checkpoint_file}")
         return None
     
     try:
         with open(checkpoint_file, 'rb') as f:
             state = pickle.load(f)
-        print(f"✅ État d'entraînement chargé: {checkpoint_file}")
+        print(f"État d'entraînement chargé: {checkpoint_file}")
         print(f"   Reprise à partir de l'épisode {state['episode'] + 1}")
         return state
     except Exception as e:
-        print(f"❌ Erreur lors du chargement de l'état: {e}")
+        print(f"Erreur lors du chargement de l'état: {e}")
         return None
 
 
@@ -51,15 +40,15 @@ def load_training_state(checkpoint_dir):
 def load_best_model(model_path: str = DEFAULT_MODEL_PATH):
     """Charge un modèle SB3 (.zip)."""
     if not os.path.exists(model_path):
-        print(f"❌ Modèle introuvable: {model_path}")
+        print(f"Modèle introuvable: {model_path}")
         return None
 
     try:
         model = PPO.load(model_path)
-        print(f"✅ Modèle chargé: {model_path}")
+        print(f"Modèle chargé: {model_path}")
         return model
     except Exception as e:
-        print(f"❌ Erreur lors du chargement du modèle: {e}")
+        print(f"Erreur lors du chargement du modèle: {e}")
         return None
 
 
@@ -93,17 +82,16 @@ def _update_ball_debug_info(game):
 
 def play_ai_vs_ai(model_path: str = DEFAULT_MODEL_PATH, num_episodes: int = 5, vs_trained: bool = False, stochastic: bool = False, noise_std: float = 0.0):
     """IA vs IA avec affichage visuel (évaluation sans entraînement)."""
-    # Importer Game uniquement quand nécessaire
     from engine.game import Game
 
     model_left = load_best_model(model_path)
     model_right = load_best_model(model_path) if vs_trained else None
 
     if model_left is None:
-        print("❌ Impossible de charger le modèle IA (gauche)")
+        print("Impossible de charger le modèle IA (gauche)")
         return
     if vs_trained and model_right is None:
-        print("❌ Impossible de charger le modèle IA (droite)")
+        print("Impossible de charger le modèle IA (droite)")
         return
 
     print("=== Mode Jeu IA vs IA ===")
@@ -143,7 +131,7 @@ def play_ai_vs_ai(model_path: str = DEFAULT_MODEL_PATH, num_episodes: int = 5, v
                 opponent_obs = game.env.get_opponent_observation()
                 action_p2 = predict_action(model_right, opponent_obs, deterministic=not stochastic, noise_std=noise_std)
                 action_p2 = unmirror_action(action_p2)
-            else:
+            else: # IA simple
                 action_p2 = game.env._get_opponent_action()
 
             # Simuler directement via env (pas de reward car pas d'entraînement)
@@ -203,7 +191,7 @@ def play_ai_vs_human(model_path: str = DEFAULT_MODEL_PATH, mouse: bool = False, 
 
     model_ai = load_best_model(model_path)
     if model_ai is None:
-        print("❌ Impossible de charger le modèle IA")
+        print("Impossible de charger le modèle IA")
         return
 
     human_on_right = mouse_side == 'right'

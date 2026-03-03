@@ -43,6 +43,10 @@ class Paddle:
         self.angular_velocity_history = []  # Historique des 10 dernières vitesses angulaires
         self.smoothed_angular_velocity = 0.0  # Vitesse angulaire lissée
 
+        # Debug collision: normale physique figée et durée d'affichage
+        self.debug_contact_normal = np.array([0.0, 0.0], dtype=float)
+        self.debug_contact_normal_steps = 0
+
     # Mise à jour de la position selon la vélocité et le dt
     def update(self, dt, speed_factor=1.0):
         """Met à jour la position de la raquette.

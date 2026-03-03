@@ -83,6 +83,49 @@ def draw_paddle(screen, paddle, color):
     # Dessin sur l'écran
     screen.blit(rotated_surf, new_rect.topleft)
 
+
+def draw_paddle_contact_normal(screen, paddle, color=(0, 255, 255), arrow_length=70):
+    """
+    Affiche la normale physique mémorisée au dernier contact pendant un nombre de steps donné.
+    La direction est figée au moment de l'impact et ne dépend pas des rotations suivantes.
+    """
+    steps = getattr(paddle, "debug_contact_normal_steps", 0)
+    if steps <= 0:
+        return
+
+    normal = getattr(paddle, "debug_contact_normal", None)
+    if normal is None:
+        return
+
+    nx, ny = float(normal[0]), float(normal[1])
+    norm = math.hypot(nx, ny)
+    if norm <= 1e-8:
+        paddle.debug_contact_normal_steps = 0
+        return
+
+    nx /= norm
+    ny /= norm
+
+    center_x, center_y, _, _, _, _, _ = paddle.get_info()
+    start = (int(center_x), int(center_y))
+    end = (int(center_x + nx * arrow_length), int(center_y + ny * arrow_length))
+
+    pygame.draw.line(screen, color, start, end, 3)
+
+    head_size = 10
+    angle = math.atan2(ny, nx)
+    left = (
+        int(end[0] - head_size * math.cos(angle - math.pi / 6)),
+        int(end[1] - head_size * math.sin(angle - math.pi / 6)),
+    )
+    right = (
+        int(end[0] - head_size * math.cos(angle + math.pi / 6)),
+        int(end[1] - head_size * math.sin(angle + math.pi / 6)),
+    )
+    pygame.draw.polygon(screen, color, [end, left, right])
+
+    paddle.debug_contact_normal_steps -= 1
+
     
 
 def draw_net(screen, net):

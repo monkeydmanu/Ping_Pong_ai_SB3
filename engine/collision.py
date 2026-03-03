@@ -270,30 +270,61 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
     ball.pos[0] = contact[0] + normal[0] * ball.radius
     ball.pos[1] = contact[1] + normal[1] * ball.radius
 
-    # --- 1. Calcul de la Vitesse Relative ---
+    # --- 1. Calcul de la NORMALE PHYSIQUE (nouvelle) ---
+    # La normale doit être influencée par la vitesse de la raquette
+    # Plus la raquette va vite, plus la direction du rebond suit son mouvement
+    normal_phys = normal  # Par défaut = normale géométrique
+    tangent_phys = tangent
+    
+    if est_mousse:
+        vel_magnitude = np.hypot(vel_x, vel_y)
+        
+        # Seuil à partir duquel le mouvement influence la normale
+        vel_threshold = 50  # pixels/s
+        
+        if vel_magnitude > vel_threshold:
+            # Direction du mouvement normalisée
+            vel_dir_x = vel_x / vel_magnitude
+            vel_dir_y = vel_y / vel_magnitude
+            
+            # Facteur de mélange : augmente avec la vitesse (max 0.7 = 70%)
+            # Plus la raquette est rapide, plus elle influence la direction
+            blend_factor = min(0.7, (vel_magnitude - vel_threshold) / 300)
+            
+            # Normale physique = mélange géométrie + mouvement
+            normal_phys_x = (1 - blend_factor) * normal[0] + blend_factor * vel_dir_x
+            normal_phys_y = (1 - blend_factor) * normal[1] + blend_factor * vel_dir_y
+            
+            # Normaliser pour avoir un vecteur unitaire
+            norm = np.hypot(normal_phys_x, normal_phys_y)
+            if norm > 0:
+                normal_phys = (normal_phys_x / norm, normal_phys_y / norm)
+                # Recalculer la tangente selon la nouvelle normale
+                tangent_phys = (-normal_phys[1], normal_phys[0])
+
+    # --- 2. Calcul de la Vitesse Relative ---
     # On se place dans le référentiel de la raquette
     rel_vx = ball.vel[0] - vel_x
     rel_vy = ball.vel[1] - vel_y
 
-    # --- 2. Vérification de la direction d'impact ---
-    # Produit scalaire : V_rel . Normale
-    v_dot_n = rel_vx * normal[0] + rel_vy * normal[1]
+    # --- 3. Vérification de la direction d'impact ---
+    # Produit scalaire : V_rel . Normale PHYSIQUE
+    v_dot_n = rel_vx * normal_phys[0] + rel_vy * normal_phys[1]
 
     # Si v_dot_n > 0, la balle s'éloigne déjà de la surface (ou la raquette la fuit)
     # On ne fait rien, sauf si on veut éviter le "tunneling"
     if v_dot_n >= 0:
         return
 
-    # --- Gestion Spéciale des Coins (Gardée de ton code) ---
-    if face and face.startswith('corner_'):
-        # Logique simplifiée pour les coins : on inverse juste selon la normale du coin + effet
-        # (Tu peux réintégrer ta logique complexe ici si tu veux, mais attention aux signes)
-        ball.vel[0] -= 2 * v_dot_n * normal[0]
-        ball.vel[1] -= 2 * v_dot_n * normal[1]
-        # On ajoute un peu de chaos/spin comme avant
-        return
+    if est_mousse:
+        rectangle.debug_contact_normal = np.array([normal_phys[0], normal_phys[1]], dtype=float)
+        rectangle.debug_contact_normal_steps = 100
 
-    # --- 3. Réflexion Physique (Rebond) ---
+    # --- Gestion des coins ---
+    # On garde la même pipeline physique pour éviter les vitesses extrêmes non clampées.
+    is_corner = bool(face and face.startswith('corner_'))
+
+    # --- 4. Réflexion Physique (Rebond) ---
     # Formule : V_new = V_old - (1 + restitution) * (V_old . N) * N
     # On applique un coefficient de restitution (rebond)
     # Pour le ping pong : 
@@ -306,42 +337,79 @@ def check_rect_collision(ball, rectangle, est_mousse, est_table, a, spin_factor=
         coeff_restitution = 0.85
     elif est_table:
         coeff_restitution = 0.85
+    if is_corner:
+        # Coins plus dissipatifs pour éviter les renvois irréalistes trop rapides
+        coeff_restitution = min(coeff_restitution, 0.65)
 
     # Calcul du vecteur de rebond en vitesse relative
     # j = impulsion scalaire
     j = -(1 + coeff_restitution) * v_dot_n
     
-    rel_vx_new = rel_vx + j * normal[0]
-    rel_vy_new = rel_vy + j * normal[1]
+    rel_vx_new = rel_vx + j * normal_phys[0]
+    rel_vy_new = rel_vy + j * normal_phys[1]
 
-    # --- 4. Friction / Tangente (Effet) ---
+    # --- 5. Friction / Tangente (Effet) ---
     # Vitesse tangentielle relative
-    v_dot_t = rel_vx * tangent[0] + rel_vy * tangent[1]
+    v_dot_t = rel_vx * tangent_phys[0] + rel_vy * tangent_phys[1]
     
     # Friction de la surface (ralentit la balle tangentiellement)
-    friction = 0.8 if est_mousse else 0.95
-    rel_vx_new -= (1 - friction) * v_dot_t * tangent[0]
-    rel_vy_new -= (1 - friction) * v_dot_t * tangent[1]
+    friction = 0.75 if est_mousse else 0.95  # Mousse plus adhérente
+    rel_vx_new -= (1 - friction) * v_dot_t * tangent_phys[0]
+    rel_vy_new -= (1 - friction) * v_dot_t * tangent_phys[1]
 
     # Ajout du "coup de poignet" (Spin generation)
     if est_mousse:
-        # Si la raquette frotte la balle, on ajoute du spin
-        # Vitesse tangentielle relative détermine le spin généré
-        spin_generation = v_dot_t * 0.5  # Facteur arbitraire
-        ball.angular_speed -= spin_generation 
+        # D'ABORD : l'effet Magnus au rebond avec le spin EXISTANT (avant modification)
+        if abs(ball.angular_speed) > 10:
+            grip = 0.8  # Adhérence augmentée
+            tangential_kick = ball.angular_speed * grip * 0.2
+            rel_vx_new += tangential_kick * tangent_phys[0]
+            rel_vy_new += tangential_kick * tangent_phys[1]
         
-        # Et inversement, le spin existant modifie la trajectoire (Effet Magnus au rebond)
-        grip = 0.3 # Adhérence
-        tangential_kick = ball.angular_speed * grip * 0.1
-        rel_vx_new += tangential_kick * tangent[0]
-        rel_vy_new += tangential_kick * tangent[1]
+        # ENSUITE : génération du nouveau spin selon le frottement
+        # Si la raquette frotte la balle, on ajoute du spin
+        # Plus le frottement tangentiel est fort, plus on génère du spin
+        spin_generation = v_dot_t * 1.5  # Augmenté pour plus d'effet
+        ball.angular_speed /= 5 # pour bcp réduire le spin au toucher de la raquette
+        ball.angular_speed += spin_generation 
+        
+        # Limite maximale du spin
+        max_spin = 600  # rad/s - augmenté
+        ball.angular_speed = np.clip(ball.angular_speed, -max_spin, max_spin)
+        
+        # Effet immédiat du frottement tangentiel sur la trajectoire
+        # Si tu frottes vers le haut, la balle doit monter un peu
+        tangential_boost = v_dot_t * 0.25  # Nouveau : kick immédiat
+        rel_vx_new += tangential_boost * tangent_phys[0]
+        rel_vy_new += tangential_boost * tangent_phys[1]
+    
+    # --- 6. Transfert d'énergie de la raquette ---
+    if est_mousse:
+        vel_magnitude = np.hypot(vel_x, vel_y)
+        
+        # Si la raquette bouge vite, elle donne un boost à la balle
+        if vel_magnitude > 30:  # Seuil réduit pour effet plus précoce
+            # Boost proportionnel à la vitesse (max 60%)
+            energy_transfer = 0.2 * min(1.0, (vel_magnitude - 30) / 1000)
+            rel_vx_new *= (0.8 + energy_transfer)
+            rel_vy_new *= (0.8 + energy_transfer)
 
-    # --- 5. Retour au Monde ---
+    # --- 7. Retour au Monde ---
     ball.vel[0] = rel_vx_new + vel_x
     ball.vel[1] = rel_vy_new + vel_y
     
     # Limites globales (clamp)
     ball.vel[0], ball.vel[1] = reduction_speed(ball.vel[0], ball.vel[1], est_mousse)
+    
+    # Limite absolue pour éviter les bugs (dynamique sur impact raquette)
+    max_vel = 800
+    if est_mousse:
+        paddle_speed = np.hypot(vel_x, vel_y)
+        max_vel += min(700, 0.9 * paddle_speed)
+    speed = np.hypot(ball.vel[0], ball.vel[1])
+    if speed > max_vel:
+        ball.vel[0] = ball.vel[0] / speed * max_vel
+        ball.vel[1] = ball.vel[1] / speed * max_vel
 
     # if est_mousse:
     #     print(f"  [Rebond Relatif] v_dot_n={v_dot_n:.1f}")
