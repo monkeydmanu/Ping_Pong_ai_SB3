@@ -1,11 +1,6 @@
 """
 Script d'entraînement PPO avec Stable-Baselines3 pour Ping-Pong.
 
-Usage:
-    python train_sb3.py                      # Entraînement (100k timesteps)
-    python train_sb3.py --timesteps 500000   # Timesteps personnalisés
-    python train_sb3.py --load models/best_model.zip  # Continuer l'entraînement
-    
 Ce script utilise:
 - MultiInputPolicy de SB3 pour les observations Dict
 - HybridFeatureExtractor personnalisé avec embeddings spatiaux
@@ -179,7 +174,7 @@ def _save_episode_count(monitor_dir: str, episode_count: int) -> None:
         with open(episode_count_file, "w", encoding="utf-8") as f:
             f.write(str(episode_count))
     except Exception as e:
-        print(f"⚠️  Erreur lors de la sauvegarde de episode_count.txt : {e}")
+        print(f"  Erreur lors de la sauvegarde de episode_count.txt : {e}")
 
 
 def _save_timestep_count(monitor_dir: str, timesteps: int) -> None:
@@ -189,7 +184,7 @@ def _save_timestep_count(monitor_dir: str, timesteps: int) -> None:
         with open(timesteps_file, "w", encoding="utf-8") as f:
             f.write(str(timesteps))
     except Exception as e:
-        print(f"⚠️  Erreur lors de la sauvegarde de timesteps.txt : {e}")
+        print(f"  Erreur lors de la sauvegarde de timesteps.txt : {e}")
 
 
 def _unwrap_env(env):
@@ -310,9 +305,9 @@ def main():
         detected_log_name = _detect_log_name_from_path(args.load)
         if detected_log_name:
             args.log_name = detected_log_name
-            print(f"🔍 Log_name détecté du modèle chargé: {detected_log_name}")
+            print(f" Log_name détecté du modèle chargé: {detected_log_name}")
         elif not os.path.exists(args.load):
-            print(f"⚠️  Fichier {args.load} introuvable!")
+            print(f"  Fichier {args.load} introuvable!")
     
     # Créer les dossiers nécessaires
     os.makedirs('models_sb3', exist_ok=True)
@@ -326,9 +321,9 @@ def main():
         monitor_log_path = f"./logs_sb3/{args.log_name}/"
         eval_log_path = f"./logs_sb3/{args.log_name}/eval/"
         final_model_name = f"ppo_pingpong_{args.log_name}_final.zip"
-        print(f"📊 Run TensorBoard: {args.log_name}")
-        print(f"💾 Checkpoints: {checkpoint_path}")
-        print(f"🏆 Best model: {best_model_path}")
+        print(f" Run TensorBoard: {args.log_name}")
+        print(f" Checkpoints: {checkpoint_path}")
+        print(f" Best model: {best_model_path}")
     else:
         tensorboard_log = "./logs_sb3/tensorboard/"
         checkpoint_path = "./models_sb3/checkpoints/"
@@ -336,7 +331,7 @@ def main():
         monitor_log_path = "./logs_sb3/"
         eval_log_path = "./logs_sb3/eval/"
         final_model_name = "ppo_pingpong_final.zip"
-        print(f"📊 Run TensorBoard: auto-numbered (PPO_1, PPO_2, ...)")
+        print(f" Run TensorBoard: auto-numbered (PPO_1, PPO_2, ...)")
     
     os.makedirs(checkpoint_path, exist_ok=True)
     os.makedirs(best_model_path, exist_ok=True)
@@ -351,12 +346,12 @@ def main():
     # Reprendre le numéro d'épisode si on continue la même run (monitor.csv existant)
     start_episode_count = _load_episode_count(monitor_log_path)
     start_timesteps = _load_timestep_count(monitor_log_path)
-    print(f"ℹ️  Monitor utilisé : {monitor_log_path}")
-    print(f"ℹ️  Épisodes déjà terminés (monitor.csv) : {start_episode_count}")
+    print(f"ℹ  Monitor utilisé : {monitor_log_path}")
+    print(f"ℹ  Épisodes déjà terminés (monitor.csv) : {start_episode_count}")
     if start_timesteps > 0:
-        print(f"ℹ️  Timesteps déjà enregistrés : {start_timesteps}")
+        print(f"ℹ  Timesteps déjà enregistrés : {start_timesteps}")
     if start_episode_count > 0:
-        print(f"🔄 Reprise à l'épisode {start_episode_count}")
+        print(f" Reprise à l'épisode {start_episode_count}")
 
 
     import shutil
@@ -373,7 +368,7 @@ def main():
     # Initialiser l'environnement avec le bon compteur d'épisodes dès le début
     if start_episode_count > 0:
         env.set_episode_count(start_episode_count)
-        print(f"✅ Phase de curriculum initialisée: Phase {env.training_phase}")
+        print(f" Phase de curriculum initialisée: Phase {env.training_phase}")
 
     # Wrapper Monitor pour logging automatique (SB3 va écraser monitor.csv)
     env = Monitor(env, monitor_log_path)
@@ -395,22 +390,22 @@ def main():
             with open(monitor_file, "w", encoding="utf-8") as f_out:
                 f_out.writelines(merged_lines)
             os.remove(backup_monitor_file)
-            print(f"✅ Fusion de l'historique monitor.csv terminée.")
+            print(f" Fusion de l'historique monitor.csv terminée.")
         except Exception as e:
-            print(f"⚠️  Erreur lors de la fusion de monitor.csv : {e}")
+            print(f"  Erreur lors de la fusion de monitor.csv : {e}")
     
     # === VÉRIFICATION DE L'ENVIRONNEMENT (optionnel) ===
     if args.check_env:
         print("\n🔍 Vérification de la compatibilité SB3...")
         try:
             check_env(env, warn=True)
-            print("✅ Environnement compatible avec SB3 !")
+            print(" Environnement compatible avec SB3 !")
         except Exception as e:
-            print(f"❌ Erreur de compatibilité: {e}")
+            print(f" Erreur de compatibilité: {e}")
             return
     
     # === CONFIGURATION DE LA POLICY ===
-    print("\n⚙️  Configuration de la policy PPO")
+    print("\n  Configuration de la policy PPO")
     print("="*70)
     
     policy_kwargs = dict(
@@ -456,9 +451,9 @@ def main():
         lr_value = args.learning_rate
 
     if args.load and os.path.exists(args.load):
-        print(f"📂 Chargement du modèle depuis: {args.load}")
+        print(f" Chargement du modèle depuis: {args.load}")
         if args.log_name:
-            print(f"⚠️  --log-name ignoré (on continue avec la run existante)")
+            print(f"  --log-name ignoré (on continue avec la run existante)")
         model = PPO.load(
             args.load,
             env=env,
@@ -469,10 +464,10 @@ def main():
         )
         if start_timesteps > 0 and model.num_timesteps < start_timesteps:
             model.num_timesteps = start_timesteps
-        print("✅ Modèle chargé avec succès!")
+        print(" Modèle chargé avec succès!")
     else:
         if args.load:
-            print(f"⚠️  Fichier {args.load} introuvable, création d'un nouveau modèle")
+            print(f"  Fichier {args.load} introuvable, création d'un nouveau modèle")
         model = PPO(
             "MultiInputPolicy",  # OBLIGATOIRE pour Dict observation space
             env,
@@ -490,7 +485,7 @@ def main():
             verbose=1,
             tensorboard_log=tensorboard_log
         )
-        print("✅ Nouveau modèle créé!")
+        print(" Nouveau modèle créé!")
 
     # Forcer l'écriture des logs tensorboard dans le dossier sans PPO_0
     new_logger = configure(tensorboard_log, ["tensorboard"])
@@ -514,7 +509,7 @@ def main():
                        eval_log_path)
     
     if args.self_play:
-        print("✅ Self-play activé sur l'environnement d'évaluation")
+        print(" Self-play activé sur l'environnement d'évaluation")
         # On force le mode déterministe pour l'évaluation pour des résultats stables
         _set_self_play(eval_env, model, deterministic=True)
     
@@ -534,16 +529,16 @@ def main():
     # === SELF-PLAY (optionnel) ===
     if args.self_play:
         _set_self_play(model.get_env(), model, deterministic=args.self_play_deterministic)
-        print("✅ Self-play activé : l'adversaire utilise la policy courante")
+        print(" Self-play activé : l'adversaire utilise la policy courante")
 
     # === ENTRAÎNEMENT ===
-    print("\n🚀 Début de l'entraînement")
+    print("\n Début de l'entraînement")
     print("="*70)
     print(f"Total timesteps: {args.timesteps:,}")
     print(f"Sauvegarde tous les {args.save_freq:,} timesteps")
     print(f"TensorBoard: logs_sb3/tensorboard/")
     print("="*70)
-    print("\n💡 Astuce: Lancez TensorBoard pour suivre l'entraînement en temps réel:")
+    print("\n Astuce: Lancez TensorBoard pour suivre l'entraînement en temps réel:")
     print("   tensorboard --logdir=./logs_sb3/tensorboard/\n")
     
     try:
@@ -554,21 +549,21 @@ def main():
             reset_num_timesteps=False  # Continuer la même run TensorBoard si on charge un modèle
         )
     except KeyboardInterrupt:
-        print("\n⚠️  Entraînement interrompu par l'utilisateur")
+        print("\n  Entraînement interrompu par l'utilisateur")
     
     # === SAUVEGARDE FINALE ===
-    print("\n💾 Sauvegarde du modèle final...")
+    print("\n Sauvegarde du modèle final...")
     final_path = f'./models_sb3/{final_model_name}'
     model.save(final_path)
-    print(f"✅ Modèle sauvegardé: {final_path}")
+    print(f" Modèle sauvegardé: {final_path}")
     
     print("\n" + "="*70)
-    print("🎉 Entraînement terminé!")
+    print(" Entraînement terminé!")
     print("="*70)
-    print(f"📁 Modèle final: {final_path}")
-    print(f"📁 Meilleur modèle: ./models_sb3/best/best_model.zip")
-    print(f"📁 Checkpoints: ./models_sb3/checkpoints/")
-    print(f"📊 Logs: ./logs_sb3/")
+    print(f" Modèle final: {final_path}")
+    print(f" Meilleur modèle: ./models_sb3/best/best_model.zip")
+    print(f" Checkpoints: ./models_sb3/checkpoints/")
+    print(f" Logs: ./logs_sb3/")
     print("="*70)
     
     env.close()
